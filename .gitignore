@@ -1,0 +1,42 @@
+# Local tool state
+.codex
+.codex/
+
+# Generated rulesets
+rulesets/
+
+# Go build artifacts
+/clash-composer
+*.exe
+*.test
+*.out
+*.prof
+coverage.*
+/bin/
+/dist/
+/build/
+
+# Dependency and workspace caches
+/vendor/
+/.cache/
+
+# Runtime and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+/merged.yaml
+tmp/
+temp/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
