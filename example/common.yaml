@@ -1,0 +1,34 @@
+# Common proxy samples for merge testing.
+# These values are placeholders and are intended to exercise merge behavior.
+proxies:
+  - name: Common-SG-VMess
+    type: vmess
+    server: sg-common.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000002
+    alterId: 0
+    cipher: auto
+    udp: true
+    tls: true
+    servername: sg-common.example.com
+    network: ws
+    ws-opts:
+      path: /vmess
+      headers:
+        Host: sg-common.example.com
+
+  - name: Common-HTTP
+    type: http
+    server: 127.0.0.1
+    port: 8080
+    username: user
+    password: pass
+    tls: false
+
+  - name: Common-SOCKS5
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+    username: user
+    password: pass
+    udp: true

@@ -1,0 +1,37 @@
+# High quality proxy samples for merge testing.
+# These values are placeholders. Replace server, port, uuid, and password
+# before using the generated config for real traffic.
+proxies:
+  - name: High-HK-SS
+    type: ss
+    server: hk-high.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: change-me
+    udp: true
+
+  - name: High-JP-Trojan
+    type: trojan
+    server: jp-high.example.com
+    port: 443
+    password: change-me
+    udp: true
+    sni: jp-high.example.com
+    skip-cert-verify: false
+    alpn:
+      - h2
+      - http/1.1
+
+  - name: High-US-VLESS
+    type: vless
+    server: us-high.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    udp: true
+    tls: true
+    servername: us-high.example.com
+    network: ws
+    ws-opts:
+      path: /vless
+      headers:
+        Host: us-high.example.com
