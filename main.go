@@ -12,6 +12,11 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 
+	if len(args) == 0 {
+		println("Usage: clash-composer <command> [args]")
+		return
+	}
+
 	if args[0] == "merge" {
 		if len(args) != 2 {
 			println("Usage: clash-composer merge <config-file>")
