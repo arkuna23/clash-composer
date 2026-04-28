@@ -9,17 +9,21 @@ import (
 	"os"
 )
 
+var version = "v0.1.0"
+
 func main() {
 	flag.Parse()
 	args := flag.Args()
 
 	if len(args) == 0 {
-		log.Println("Usage: clash-composer <command> [args]")
-		log.Println("Commands: merge <config-file>, download <subscription-url>")
+		printUsage()
 		return
 	}
 
 	switch args[0] {
+	case "version":
+		log.Printf("command start: version")
+		_, _ = os.Stdout.WriteString(version + "\n")
 	case "merge":
 		log.Printf("command start: merge args=%v", args[1:])
 		if len(args) != 2 {
@@ -86,7 +90,12 @@ func main() {
 		}
 	default:
 		log.Printf("unknown command: %s", args[0])
-		log.Println("Usage: clash-composer <command> [args]")
-		log.Println("Commands: merge <config-file>, download <subscription-url>")
+		printUsage()
 	}
+}
+
+func printUsage() {
+	log.Printf("clash-composer %s", version)
+	log.Println("Usage: clash-composer <command> [args]")
+	log.Println("Commands: version, merge <config-file>, download <subscription-url>")
 }
