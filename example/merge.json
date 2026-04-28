@@ -1,8 +1,16 @@
 {
   "template": "example/template.yaml",
   "configurations": {
-    "High": ["example/high.yaml"],
-    "Common": ["example/common.yaml"]
+    "High": [
+      {
+        "path": "example/high.yaml"
+      }
+    ],
+    "Common": [
+      {
+        "path": "example/common.yaml"
+      }
+    ]
   },
   "rulesetStrategy": "url-ruleset"
 }

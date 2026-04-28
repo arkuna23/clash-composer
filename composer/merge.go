@@ -2,8 +2,14 @@ package composer
 
 import (
 	"clash-composer/config"
+	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
+	"strings"
+	"time"
 )
 
 type RulesetStrategy string
@@ -13,10 +19,18 @@ const (
 	ReplaceRuleset RulesetStrategy = "replace-ruleset"
 )
 
+var httpClient = &http.Client{Timeout: 5 * time.Second}
+
+type ConfigSource struct {
+	Path string `json:"path"`
+	Url  string `json:"url"`
+	Cmd  string `json:"cmd"`
+}
+
 type MergeRule struct {
-	Template        string              `json:"template"`
-	Configurations  map[string][]string `json:"configurations"` // proxy group name: config
-	RulesetStrategy RulesetStrategy     `json:"rulesetStrategy"`
+	Template        string                    `json:"template"`
+	Configurations  map[string][]ConfigSource `json:"configurations"` // proxy group name: config
+	RulesetStrategy RulesetStrategy           `json:"rulesetStrategy"`
 }
 
 func mergeProxies(template *config.RawConfig, configs []*config.RawConfig) {
@@ -64,16 +78,78 @@ func appendProxyGroup(template *config.RawConfig, name string, configs []*config
 	return nil
 }
 
-func loadConfigurations(configs map[string][]string) (map[string][]*config.RawConfig, error) {
+func loadConfigSource(source ConfigSource) (*config.RawConfig, error) {
+	hasPath := source.Path != ""
+	hasURL := source.Url != ""
+	hasCmd := source.Cmd != ""
+
+	selected := 0
+	if hasPath {
+		selected++
+	}
+	if hasURL {
+		selected++
+	}
+	if hasCmd {
+		selected++
+	}
+	if selected != 1 {
+		return nil, fmt.Errorf("config source must set exactly one of path, url, or cmd: %+v", source)
+	}
+
+	var (
+		data []byte
+		err  error
+	)
+	if hasPath {
+		data, err = os.ReadFile(source.Path)
+		if err != nil {
+			return nil, err
+		}
+	} else if hasURL {
+		resp, err := httpClient.Get(source.Url)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return nil, fmt.Errorf("fetch %s: unexpected status %d", source.Url, resp.StatusCode)
+		}
+
+		data, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "bash", "-lc", source.Cmd)
+		data, err = cmd.Output()
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, fmt.Errorf("run %q: command timed out", source.Cmd)
+			}
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				stderr := strings.TrimSpace(string(exitErr.Stderr))
+				if stderr != "" {
+					return nil, fmt.Errorf("run %q: %w: %s", source.Cmd, err, stderr)
+				}
+			}
+			return nil, fmt.Errorf("run %q: %w", source.Cmd, err)
+		}
+	}
+
+	return config.UnmarshalRawConfig(data)
+}
+
+func loadConfigurations(configs map[string][]ConfigSource) (map[string][]*config.RawConfig, error) {
 	result := make(map[string][]*config.RawConfig)
 	for name, cfg := range configs {
 		result[name] = make([]*config.RawConfig, 0, len(cfg))
-		for _, path := range cfg {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return nil, err
-			}
-			c, err := config.UnmarshalRawConfig(data)
+		for _, source := range cfg {
+			c, err := loadConfigSource(source)
 			if err != nil {
 				return nil, err
 			}
