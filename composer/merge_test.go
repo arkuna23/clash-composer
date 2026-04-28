@@ -1,9 +1,11 @@
 package composer
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -61,6 +63,39 @@ func TestMergeExample(t *testing.T) {
 	} {
 		if !hasRule(want) {
 			t.Fatalf("missing rule %q in %#v", want, cfg.Rule)
+		}
+	}
+}
+
+func TestMergeLogs(t *testing.T) {
+	t.Chdir("..")
+
+	data, err := os.ReadFile("example/merge.json")
+	if err != nil {
+		t.Fatalf("read merge example: %v", err)
+	}
+
+	var rule MergeRule
+	if err := json.Unmarshal(data, &rule); err != nil {
+		t.Fatalf("unmarshal merge example: %v", err)
+	}
+
+	var buf bytes.Buffer
+	restoreLogger(t, &buf)
+
+	if _, err := Merge(rule); err != nil {
+		t.Fatalf("merge example: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		`merge start: template="example/template.yaml"`,
+		`load config source start: path="example/high.yaml"`,
+		`load config source complete: path="example/common.yaml"`,
+		`merge complete:`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("log output %q does not contain %q", output, want)
 		}
 	}
 }
@@ -216,6 +251,19 @@ func restoreHTTPClient(t *testing.T, client *http.Client) {
 	httpClient = client
 	t.Cleanup(func() {
 		httpClient = oldClient
+	})
+}
+
+func restoreLogger(t *testing.T, output io.Writer) {
+	t.Helper()
+
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
 	})
 }
 
