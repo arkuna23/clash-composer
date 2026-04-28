@@ -133,6 +133,9 @@ proxies:
 			if req.URL.String() != "https://example.com/url.yaml" {
 				t.Fatalf("unexpected URL %q", req.URL.String())
 			}
+			if got, want := req.Header.Get("User-Agent"), clashVergeUserAgent; got != want {
+				t.Fatalf("User-Agent = %q, want %q", got, want)
+			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body: io.NopCloser(strings.NewReader(`
@@ -171,6 +174,26 @@ proxies:
 	}
 	if got[2].Proxy[0]["name"] != "Cmd-Proxy" {
 		t.Fatalf("cmd config not loaded: %#v", got[2].Proxy)
+	}
+}
+
+func TestLoadConfigSourceParseFailure(t *testing.T) {
+	restoreHTTPClient(t, &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("not: [valid")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	_, err := loadConfigSource(ConfigSource{Url: "https://example.com/invalid.yaml"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), `parse url="https://example.com/invalid.yaml"`) {
+		t.Fatalf("error %q does not contain parse context", err)
 	}
 }
 

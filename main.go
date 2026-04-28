@@ -15,10 +15,12 @@ func main() {
 
 	if len(args) == 0 {
 		log.Println("Usage: clash-composer <command> [args]")
+		log.Println("Commands: merge <config-file>, download <subscription-url>")
 		return
 	}
 
-	if args[0] == "merge" {
+	switch args[0] {
+	case "merge":
 		log.Printf("command start: merge args=%v", args[1:])
 		if len(args) != 2 {
 			log.Println("Usage: clash-composer merge <config-file>")
@@ -64,5 +66,27 @@ func main() {
 		}
 
 		log.Println("write merged config complete: merged.yaml")
+	case "download":
+		log.Printf("command start: download args=%v", args[1:])
+		if len(args) != 2 {
+			log.Println("Usage: clash-composer download <subscription-url>")
+			return
+		}
+
+		subscriptionURL := args[1]
+		log.Printf("download start: %s", subscriptionURL)
+		bytes, err := composer.DownloadURL(subscriptionURL)
+		if err != nil {
+			log.Printf("download failed: %v", err)
+			return
+		}
+		log.Printf("download complete: bytes=%d", len(bytes))
+		if _, err := os.Stdout.Write(bytes); err != nil {
+			log.Printf("write stdout failed: %v", err)
+		}
+	default:
+		log.Printf("unknown command: %s", args[0])
+		log.Println("Usage: clash-composer <command> [args]")
+		log.Println("Commands: merge <config-file>, download <subscription-url>")
 	}
 }
