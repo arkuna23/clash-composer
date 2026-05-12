@@ -51,6 +51,21 @@ func loadConfigSource(source ConfigSource) (cfg *config.RawConfig, err error) {
 }
 
 func downloadConfigSource(source ConfigSource) ([]byte, error) {
+	if err := validateConfigSource(source); err != nil {
+		return nil, err
+	}
+
+	switch {
+	case source.Path != "":
+		return os.ReadFile(source.Path)
+	case source.Url != "":
+		return downloadHTTPConfig(source.Url)
+	default:
+		return downloadCommandConfig(source.Cmd)
+	}
+}
+
+func validateConfigSource(source ConfigSource) error {
 	hasPath := source.Path != ""
 	hasURL := source.Url != ""
 	hasCmd := source.Cmd != ""
@@ -66,17 +81,10 @@ func downloadConfigSource(source ConfigSource) ([]byte, error) {
 		selected++
 	}
 	if selected != 1 {
-		return nil, fmt.Errorf("config source must set exactly one of path, url, or cmd: %+v", source)
+		return fmt.Errorf("config source must set exactly one of path, url, or cmd: %+v", source)
 	}
 
-	switch {
-	case hasPath:
-		return os.ReadFile(source.Path)
-	case hasURL:
-		return downloadHTTPConfig(source.Url)
-	default:
-		return downloadCommandConfig(source.Cmd)
-	}
+	return nil
 }
 
 func downloadHTTPConfig(url string) ([]byte, error) {

@@ -24,6 +24,27 @@ func main() {
 	case "version":
 		log.Printf("command start: version")
 		_, _ = os.Stdout.WriteString(version + "\n")
+	case "serve":
+		log.Printf("command start: serve args=%v", args[1:])
+		serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
+		addr := serveFlags.String("addr", "127.0.0.1:8080", "HTTP listen address")
+		configDir := serveFlags.String("config-dir", "", "directory for API-managed merge config files")
+		token := serveFlags.String("token", "", "HTTP API token; defaults to CLASH_COMPOSER_TOKEN")
+		if err := serveFlags.Parse(args[1:]); err != nil {
+			log.Printf("parse serve flags failed: %v", err)
+			return
+		}
+		if serveFlags.NArg() != 0 {
+			log.Println("Usage: clash-composer serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>]")
+			return
+		}
+		if err := composer.ServeHTTPAPI(composer.ServeOptions{
+			Addr:      *addr,
+			ConfigDir: *configDir,
+			Token:     *token,
+		}); err != nil {
+			log.Printf("serve failed: %v", err)
+		}
 	case "merge":
 		log.Printf("command start: merge args=%v", args[1:])
 		if len(args) != 2 {
@@ -97,5 +118,5 @@ func main() {
 func printUsage() {
 	log.Printf("clash-composer %s", version)
 	log.Println("Usage: clash-composer <command> [args]")
-	log.Println("Commands: version, merge <config-file>, download <subscription-url>")
+	log.Println("Commands: version, serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>], merge <config-file>, download <subscription-url>")
 }
