@@ -58,8 +58,8 @@ func appendProxyGroup(template *config.RawConfig, name string, configs []*config
 	})
 
 	proxiesSelect := make([]string, 0, len(proxies)+1)
-	proxiesSelect = append(proxiesSelect, proxies...)
 	proxiesSelect = append(proxiesSelect, name+"-UrlTest")
+	proxiesSelect = append(proxiesSelect, proxies...)
 	template.ProxyGroup = append(template.ProxyGroup, map[string]any{
 		"name":    name,
 		"type":    "select",
