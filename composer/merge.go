@@ -21,6 +21,11 @@ type MergeRule struct {
 	RulesetStrategy RulesetStrategy           `json:"rulesetStrategy"`
 }
 
+// MergeOptions controls optional merge behavior that is not part of the JSON rule.
+type MergeOptions struct {
+	CommandDir string
+}
+
 func mergeProxies(template *config.RawConfig, configs []*config.RawConfig) {
 	log.Printf("merge proxies start: sources=%d", len(configs))
 	for _, cfg := range configs {
@@ -71,6 +76,10 @@ func appendProxyGroup(template *config.RawConfig, name string, configs []*config
 }
 
 func Merge(rule MergeRule) (*config.RawConfig, error) {
+	return MergeWithOptions(rule, MergeOptions{})
+}
+
+func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, error) {
 	start := time.Now()
 	log.Printf("merge start: template=%q groups=%d strategy=%s", rule.Template, len(rule.Configurations), rule.RulesetStrategy)
 	log.Printf("read template start: %s", rule.Template)
@@ -89,7 +98,7 @@ func Merge(rule MergeRule) (*config.RawConfig, error) {
 	}
 	log.Printf("parse template complete: %s proxies=%d rules=%d", rule.Template, len(newConfig.Proxy), len(newConfig.Rule))
 
-	configurations, err := loadConfigurations(rule.Configurations)
+	configurations, err := loadConfigurations(rule.Configurations, options)
 	if err != nil {
 		log.Printf("load configurations failed: err=%v", err)
 		return nil, err

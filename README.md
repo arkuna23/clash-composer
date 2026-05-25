@@ -65,6 +65,8 @@ merged.yaml
 - `url`: 从 HTTP 订阅地址下载
 - `cmd`: 从命令的 `stdout` 读取
 
+`cmd` 会在 merge JSON 文件所在目录执行。
+
 ### 2. 下载订阅
 
 ```bash

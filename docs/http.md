@@ -13,6 +13,7 @@ go run . serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>]
 - `-token` 是 API token；如果未传，会读取 `CLASH_COMPOSER_TOKEN`。
 - 如果 `-token` 和 `CLASH_COMPOSER_TOKEN` 都为空，服务会启动失败。
 - merge rule 的 `template` 和本地配置源 `path` 在 serve 模式下必须位于 `config-dir` 内；相对路径会基于 `config-dir` 解析。
+- merge rule 中的 `cmd` 配置源会在 `config-dir` 内执行。
 
 ## 鉴权
 
@@ -95,7 +96,7 @@ Content-Type: application/json
 }
 ```
 
-配置源支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内。
+配置源支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
 
 创建成功返回 `201 Created` 和保存后的 JSON。若配置已存在，返回 `409 Conflict`。
 

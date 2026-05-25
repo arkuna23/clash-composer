@@ -26,7 +26,7 @@ type ConfigSource struct {
 	Cmd  string `json:"cmd"`
 }
 
-func loadConfigSource(source ConfigSource) (cfg *config.RawConfig, err error) {
+func loadConfigSource(source ConfigSource, options MergeOptions) (cfg *config.RawConfig, err error) {
 	label := sourceLabel(source)
 	start := time.Now()
 	log.Printf("load config source start: %s", label)
@@ -38,7 +38,7 @@ func loadConfigSource(source ConfigSource) (cfg *config.RawConfig, err error) {
 		log.Printf("load config source complete: %s elapsed=%s proxies=%d", label, time.Since(start), len(cfg.Proxy))
 	}()
 
-	data, err := downloadConfigSource(source)
+	data, err := downloadConfigSource(source, options)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func loadConfigSource(source ConfigSource) (cfg *config.RawConfig, err error) {
 	return cfg, nil
 }
 
-func downloadConfigSource(source ConfigSource) ([]byte, error) {
+func downloadConfigSource(source ConfigSource, options MergeOptions) ([]byte, error) {
 	if err := validateConfigSource(source); err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func downloadConfigSource(source ConfigSource) ([]byte, error) {
 	case source.Url != "":
 		return downloadHTTPConfig(source.Url)
 	default:
-		return downloadCommandConfig(source.Cmd)
+		return downloadCommandConfig(source.Cmd, options.CommandDir)
 	}
 }
 
@@ -115,11 +115,14 @@ func DownloadURL(url string) ([]byte, error) {
 	return downloadHTTPConfig(url)
 }
 
-func downloadCommandConfig(command string) ([]byte, error) {
+func downloadCommandConfig(command string, dir string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultDownloadTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-lc", command)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	data, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -137,7 +140,7 @@ func downloadCommandConfig(command string) ([]byte, error) {
 	return data, nil
 }
 
-func loadConfigurations(configs map[string][]ConfigSource) (map[string][]*config.RawConfig, error) {
+func loadConfigurations(configs map[string][]ConfigSource, options MergeOptions) (map[string][]*config.RawConfig, error) {
 	log.Printf("load configurations start: groups=%d", len(configs))
 	result := make(map[string][]*config.RawConfig)
 	for name, cfg := range configs {
@@ -145,7 +148,7 @@ func loadConfigurations(configs map[string][]ConfigSource) (map[string][]*config
 		log.Printf("load configuration group start: group=%q sources=%d", name, len(cfg))
 		result[name] = make([]*config.RawConfig, 0, len(cfg))
 		for _, source := range cfg {
-			c, err := loadConfigSource(source)
+			c, err := loadConfigSource(source, options)
 			if err != nil {
 				return nil, err
 			}

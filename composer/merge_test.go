@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -157,7 +158,7 @@ proxies:
 			{Url: "https://example.com/url.yaml"},
 			{Cmd: fmt.Sprintf("cat %q", cmdFile)},
 		},
-	})
+	}, MergeOptions{})
 	if err != nil {
 		t.Fatalf("load configurations: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestLoadConfigSourceParseFailure(t *testing.T) {
 		}),
 	})
 
-	_, err := loadConfigSource(ConfigSource{Url: "https://example.com/invalid.yaml"})
+	_, err := loadConfigSource(ConfigSource{Url: "https://example.com/invalid.yaml"}, MergeOptions{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -256,7 +257,7 @@ func TestLoadConfigSourceValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := loadConfigSource(tc.src)
+			_, err := loadConfigSource(tc.src, MergeOptions{})
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -264,6 +265,73 @@ func TestLoadConfigSourceValidation(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadConfigSourceCmdUsesCommandDir(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "relative.yaml")
+	if err := os.WriteFile(configFile, []byte(`
+proxies:
+  - name: Relative-Cmd-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write cmd fixture: %v", err)
+	}
+
+	cfg, err := loadConfigSource(ConfigSource{Cmd: "cat relative.yaml"}, MergeOptions{
+		CommandDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("load command config: %v", err)
+	}
+	if got := cfg.Proxy[0]["name"]; got != "Relative-Cmd-Proxy" {
+		t.Fatalf("proxy name = %q, want Relative-Cmd-Proxy", got)
+	}
+}
+
+func TestMergeWithOptionsPassesCommandDir(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte(`
+proxy-groups:
+  - name: Existing
+    type: select
+    proxies:
+      - DIRECT
+rules: []
+`), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	cmdFile := filepath.Join(dir, "cmd.yaml")
+	if err := os.WriteFile(cmdFile, []byte(`
+proxies:
+  - name: Merge-Cmd-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write cmd fixture: %v", err)
+	}
+
+	cfg, err := MergeWithOptions(MergeRule{
+		Template: templateFile,
+		Configurations: map[string][]ConfigSource{
+			"Cmd": {
+				{Cmd: "cat cmd.yaml"},
+			},
+		},
+	}, MergeOptions{
+		CommandDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("merge with command dir: %v", err)
+	}
+	if got := cfg.Proxy[0]["name"]; got != "Merge-Cmd-Proxy" {
+		t.Fatalf("proxy name = %q, want Merge-Cmd-Proxy", got)
 	}
 }
 

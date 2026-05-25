@@ -7,6 +7,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"path/filepath"
 )
 
 var version = "v0.1.0"
@@ -68,8 +69,16 @@ func main() {
 		}
 		log.Printf("parse merge rule complete: template=%q groups=%d", mergeRule.Template, len(mergeRule.Configurations))
 
+		mergeFile, err := filepath.Abs(args[1])
+		if err != nil {
+			log.Printf("resolve merge rule path failed: %v", err)
+			return
+		}
+
 		log.Printf("merge execution start: %s", args[1])
-		merged, err := composer.Merge(mergeRule)
+		merged, err := composer.MergeWithOptions(mergeRule, composer.MergeOptions{
+			CommandDir: filepath.Dir(mergeFile),
+		})
 		if err != nil {
 			log.Printf("merge execution failed: %v", err)
 			return

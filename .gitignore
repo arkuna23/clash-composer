@@ -1,6 +1,7 @@
 # Local tool state
 .codex
 .codex/
+.kiro/
 
 # Generated rulesets
 rulesets/

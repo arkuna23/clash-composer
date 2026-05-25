@@ -255,7 +255,9 @@ func (api *httpAPI) handleSubscription(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	merged, mergeErr := Merge(mergedRule)
+	merged, mergeErr := MergeWithOptions(mergedRule, MergeOptions{
+		CommandDir: api.configDir,
+	})
 	if mergeErr != nil {
 		writeAPIError(w, internalError("merge config", mergeErr))
 		return
