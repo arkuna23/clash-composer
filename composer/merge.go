@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type RulesetStrategy string
@@ -79,6 +81,25 @@ func Merge(rule MergeRule) (*config.RawConfig, error) {
 	return MergeWithOptions(rule, MergeOptions{})
 }
 
+// MergeYAML returns a merged config plus YAML rendered from the template document.
+func MergeYAML(rule MergeRule) (*config.RawConfig, []byte, error) {
+	return MergeYAMLWithOptions(rule, MergeOptions{})
+}
+
+// MergeYAMLWithOptions returns merged YAML without adding fields absent from the template.
+func MergeYAMLWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, []byte, error) {
+	merged, err := MergeWithOptions(rule, options)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	data, err := renderMergedTemplateYAML(rule.Template, merged)
+	if err != nil {
+		return nil, nil, err
+	}
+	return merged, data, nil
+}
+
 func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, error) {
 	start := time.Now()
 	log.Printf("merge start: template=%q groups=%d strategy=%s", rule.Template, len(rule.Configurations), rule.RulesetStrategy)
@@ -117,4 +138,59 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 
 	log.Printf("merge complete: elapsed=%s proxies=%d groups=%d rules=%d", time.Since(start), len(newConfig.Proxy), len(newConfig.ProxyGroup), len(newConfig.Rule))
 	return newConfig, nil
+}
+
+func renderMergedTemplateYAML(templatePath string, merged *config.RawConfig) ([]byte, error) {
+	doc, err := loadTemplateDocument(templatePath)
+	if err != nil {
+		return nil, err
+	}
+	root, err := documentMapping(doc)
+	if err != nil {
+		return nil, err
+	}
+
+	proxies, err := encodeYAMLNode(merged.Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("encode proxies: %w", err)
+	}
+	setTopLevelYAMLValue(root, "proxies", proxies, "proxy-groups", "rule-providers", "rules")
+
+	proxyGroups, err := encodeYAMLNode(merged.ProxyGroup)
+	if err != nil {
+		return nil, fmt.Errorf("encode proxy groups: %w", err)
+	}
+	setTopLevelYAMLValue(root, "proxy-groups", proxyGroups, "rule-providers", "rules")
+
+	return yaml.Marshal(doc)
+}
+
+func encodeYAMLNode(value any) (*yaml.Node, error) {
+	node := &yaml.Node{}
+	if err := node.Encode(value); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+func setTopLevelYAMLValue(root *yaml.Node, key string, value *yaml.Node, anchors ...string) {
+	_, valueIndex := findMappingKey(root, key)
+	if valueIndex >= 0 {
+		root.Content[valueIndex] = value
+		return
+	}
+
+	insertIndex := len(root.Content)
+	for _, anchor := range anchors {
+		keyIndex, _ := findMappingKey(root, anchor)
+		if keyIndex >= 0 && keyIndex < insertIndex {
+			insertIndex = keyIndex
+		}
+	}
+
+	content := make([]*yaml.Node, 0, len(root.Content)+2)
+	content = append(content, root.Content[:insertIndex]...)
+	content = append(content, stringNode(key), value)
+	content = append(content, root.Content[insertIndex:]...)
+	root.Content = content
 }

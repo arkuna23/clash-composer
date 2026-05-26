@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 const testAPIToken = "secret-token"
@@ -40,25 +41,25 @@ proxies:
 		RulesetStrategy: UrlRuleset,
 	}
 
-	resp := performJSONRequest(t, api, http.MethodPost, "/configs/demo", rule, true)
+	resp := performJSONRequest(t, api, http.MethodPost, "/api/configs/demo", rule, true)
 	assertStatus(t, resp, http.StatusCreated)
 
-	resp = performRequest(t, api, http.MethodGet, "/configs", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	if !strings.Contains(resp.Body.String(), `"demo"`) {
 		t.Fatalf("config list missing demo: %s", resp.Body.String())
 	}
 
-	resp = performRequest(t, api, http.MethodGet, "/configs/demo", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	if !strings.Contains(resp.Body.String(), `"template":"template.yaml"`) {
 		t.Fatalf("config body mismatch: %s", resp.Body.String())
 	}
 
-	resp = performRequest(t, api, http.MethodGet, "/subscriptions/demo.yaml", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml", nil, true)
 	assertStatus(t, resp, http.StatusUnauthorized)
 
-	resp = performRequest(t, api, http.MethodGet, "/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	resp = performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
 	assertStatus(t, resp, http.StatusOK)
 	body := resp.Body.String()
 	for _, want := range []string{"Test-Proxy", "Auto-UrlTest", "MATCH,DIRECT"} {
@@ -67,13 +68,13 @@ proxies:
 		}
 	}
 
-	resp = performJSONRequest(t, api, http.MethodPost, "/configs/..%2Fbad", rule, true)
+	resp = performJSONRequest(t, api, http.MethodPost, "/api/configs/..%2Fbad", rule, true)
 	assertStatus(t, resp, http.StatusBadRequest)
 
-	resp = performRequest(t, api, http.MethodDelete, "/configs/demo", nil, true)
+	resp = performRequest(t, api, http.MethodDelete, "/api/configs/demo", nil, true)
 	assertStatus(t, resp, http.StatusNoContent)
 
-	resp = performRequest(t, api, http.MethodGet, "/configs/demo", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo", nil, true)
 	assertStatus(t, resp, http.StatusNotFound)
 }
 
@@ -93,7 +94,7 @@ rules:
 	writeMergeRule(t, dir, "demo", MergeRule{Template: "template.yaml"})
 	api := newTestAPI(t, dir)
 
-	resp := performRequest(t, api, http.MethodGet, "/configs/demo/template/rule-providers/reject", nil, true)
+	resp := performRequest(t, api, http.MethodGet, "/api/configs/demo/template/rule-providers/reject", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	if !strings.Contains(resp.Body.String(), `"behavior":"domain"`) {
 		t.Fatalf("provider body mismatch: %s", resp.Body.String())
@@ -106,23 +107,23 @@ rules:
 		"path":     "./ruleset/cncidr.yaml",
 		"interval": 86400,
 	}
-	resp = performJSONRequest(t, api, http.MethodPost, "/configs/demo/template/rule-providers/cncidr", provider, true)
+	resp = performJSONRequest(t, api, http.MethodPost, "/api/configs/demo/template/rule-providers/cncidr", provider, true)
 	assertStatus(t, resp, http.StatusCreated)
 
 	provider["behavior"] = "classical"
-	resp = performJSONRequest(t, api, http.MethodPut, "/configs/demo/template/rule-providers/cncidr", provider, true)
+	resp = performJSONRequest(t, api, http.MethodPut, "/api/configs/demo/template/rule-providers/cncidr", provider, true)
 	assertStatus(t, resp, http.StatusOK)
 
-	resp = performRequest(t, api, http.MethodGet, "/configs/demo/template/rule-providers/cncidr", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo/template/rule-providers/cncidr", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	if !strings.Contains(resp.Body.String(), `"behavior":"classical"`) {
 		t.Fatalf("updated provider body mismatch: %s", resp.Body.String())
 	}
 
-	resp = performRequest(t, api, http.MethodDelete, "/configs/demo/template/rule-providers/reject", nil, true)
+	resp = performRequest(t, api, http.MethodDelete, "/api/configs/demo/template/rule-providers/reject", nil, true)
 	assertStatus(t, resp, http.StatusNoContent)
 
-	resp = performRequest(t, api, http.MethodGet, "/configs/demo/template/rule-providers/reject", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo/template/rule-providers/reject", nil, true)
 	assertStatus(t, resp, http.StatusNotFound)
 }
 
@@ -142,7 +143,7 @@ rules:
 	writeMergeRule(t, dir, "demo", MergeRule{Template: "template.yaml"})
 	api := newTestAPI(t, dir)
 
-	resp := performRequest(t, api, http.MethodGet, "/configs/demo/template/rule-groups", nil, true)
+	resp := performRequest(t, api, http.MethodGet, "/api/configs/demo/template/rule-groups", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	var groups []RuleGroup
 	decodeResponse(t, resp, &groups)
@@ -153,37 +154,37 @@ rules:
 		Index: intPtr(2),
 		Rules: []string{"RULE-SET,google,High"},
 	}
-	resp = performJSONRequest(t, api, http.MethodPost, "/configs/demo/template/rule-groups", create, true)
+	resp = performJSONRequest(t, api, http.MethodPost, "/api/configs/demo/template/rule-groups", create, true)
 	assertStatus(t, resp, http.StatusCreated)
 
-	resp = performRequest(t, api, http.MethodGet, "/configs/demo/template/rule-groups", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo/template/rule-groups", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	decodeResponse(t, resp, &groups)
 	assertGroupNames(t, groups, []string{"default", "steam", "google", "openai"})
 
-	resp = performJSONRequest(t, api, http.MethodPost, "/configs/demo/template/rule-groups/google/rules", updateRuleRequest{
+	resp = performJSONRequest(t, api, http.MethodPost, "/api/configs/demo/template/rule-groups/google/rules", updateRuleRequest{
 		Rule:  "DOMAIN-SUFFIX,google.com,High",
 		Index: intPtr(1),
 	}, true)
 	assertStatus(t, resp, http.StatusCreated)
 
-	resp = performJSONRequest(t, api, http.MethodPut, "/configs/demo/template/rule-groups/google/rules/0", updateRuleRequest{
+	resp = performJSONRequest(t, api, http.MethodPut, "/api/configs/demo/template/rule-groups/google/rules/0", updateRuleRequest{
 		Rule: "RULE-SET,google,Auto",
 	}, true)
 	assertStatus(t, resp, http.StatusOK)
 
-	resp = performJSONRequest(t, api, http.MethodPut, "/configs/demo/template/rule-groups/google", updateRuleGroupRequest{
+	resp = performJSONRequest(t, api, http.MethodPut, "/api/configs/demo/template/rule-groups/google", updateRuleGroupRequest{
 		Name: stringPtr("search"),
 	}, true)
 	assertStatus(t, resp, http.StatusOK)
 
-	resp = performRequest(t, api, http.MethodDelete, "/configs/demo/template/rule-groups/steam", nil, true)
+	resp = performRequest(t, api, http.MethodDelete, "/api/configs/demo/template/rule-groups/steam", nil, true)
 	assertStatus(t, resp, http.StatusNoContent)
 
-	resp = performRequest(t, api, http.MethodDelete, "/configs/demo/template/rule-groups/default", nil, true)
+	resp = performRequest(t, api, http.MethodDelete, "/api/configs/demo/template/rule-groups/default", nil, true)
 	assertStatus(t, resp, http.StatusBadRequest)
 
-	resp = performRequest(t, api, http.MethodGet, "/configs/demo/template/rule-groups", nil, true)
+	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo/template/rule-groups", nil, true)
 	assertStatus(t, resp, http.StatusOK)
 	decodeResponse(t, resp, &groups)
 	assertGroupNames(t, groups, []string{"default", "search", "openai"})
@@ -203,8 +204,47 @@ func TestHTTPAPIRejectsEscapingManagedPaths(t *testing.T) {
 	api := newTestAPI(t, dir)
 
 	rule := MergeRule{Template: "../template.yaml"}
-	resp := performJSONRequest(t, api, http.MethodPost, "/configs/demo", rule, true)
+	resp := performJSONRequest(t, api, http.MethodPost, "/api/configs/demo", rule, true)
 	assertStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestHTTPAPIStaticDisabledWithoutWebappFS(t *testing.T) {
+	dir := t.TempDir()
+	api := newTestAPI(t, dir)
+
+	resp := performRequest(t, api, http.MethodGet, "/", nil, false)
+	assertStatus(t, resp, http.StatusNotFound)
+	if !strings.Contains(resp.Body.String(), "/api/") {
+		t.Fatalf("expected hint mentioning /api/, got: %s", resp.Body.String())
+	}
+}
+
+func TestHTTPAPIStaticServesIndexAndFallback(t *testing.T) {
+	dir := t.TempDir()
+	api, _, err := newHTTPAPI(ServeOptions{
+		ConfigDir: dir,
+		Token:     testAPIToken,
+		WebappFS:  fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>hi</html>")}, "assets/app.js": &fstest.MapFile{Data: []byte("console.log(1)")}},
+	})
+	if err != nil {
+		t.Fatalf("new api: %v", err)
+	}
+
+	cases := []struct {
+		path string
+		body string
+	}{
+		{"/", "<html>hi</html>"},
+		{"/assets/app.js", "console.log(1)"},
+		{"/configs/demo", "<html>hi</html>"}, // SPA fallback for unknown routes (no /api prefix)
+	}
+	for _, tc := range cases {
+		resp := performRequest(t, api, http.MethodGet, tc.path, nil, false)
+		assertStatus(t, resp, http.StatusOK)
+		if !strings.Contains(resp.Body.String(), tc.body) {
+			t.Fatalf("path=%s body mismatch: %s", tc.path, resp.Body.String())
+		}
+	}
 }
 
 func newTestAPI(t *testing.T, dir string) *httpAPI {

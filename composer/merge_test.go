@@ -335,6 +335,74 @@ proxies:
 	}
 }
 
+func TestMergeYAMLWithOptionsPreservesTemplateFields(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte(`
+mixed-port: 7890
+custom-field:
+  enabled: yes
+dns:
+  enabled: true
+rules:
+  # keep-comment
+  - MATCH,DIRECT
+`), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	proxyFile := filepath.Join(dir, "proxy.yaml")
+	if err := os.WriteFile(proxyFile, []byte(`
+proxies:
+  - name: Template-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write proxy fixture: %v", err)
+	}
+
+	_, data, err := MergeYAMLWithOptions(MergeRule{
+		Template: templateFile,
+		Configurations: map[string][]ConfigSource{
+			"Auto": {
+				{Path: proxyFile},
+			},
+		},
+	}, MergeOptions{})
+	if err != nil {
+		t.Fatalf("merge yaml: %v", err)
+	}
+
+	output := string(data)
+	for _, want := range []string{
+		"mixed-port: 7890",
+		"custom-field:",
+		"enabled: true",
+		"# keep-comment",
+		"proxies:",
+		"name: Template-Proxy",
+		"proxy-groups:",
+		"name: Auto-UrlTest",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("merged YAML missing %q:\n%s", want, output)
+		}
+	}
+	for _, unwanted := range []string{
+		"bind-address:",
+		"mode:",
+		"ntp:",
+		"tun:",
+		"use-hosts:",
+		"default-nameserver:",
+	} {
+		if strings.Contains(output, unwanted) {
+			t.Fatalf("merged YAML contains template-absent field %q:\n%s", unwanted, output)
+		}
+	}
+}
+
 func restoreHTTPClient(t *testing.T, client *http.Client) {
 	t.Helper()
 

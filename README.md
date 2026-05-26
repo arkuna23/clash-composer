@@ -2,9 +2,11 @@
 
 `clash-composer` 是一个用于管理和组合 Mihomo/Clash 配置的小工具。  
 
-当前工具适合把不同来源的代理节点整理到统一模板里，再生成一份 `merged.yaml`。
+当前工具适合把不同来源的代理节点整理到统一模板里，再生成一份 `merged.yaml`。除了 CLI，还内置了一个 HTTP API 与对应的 React Web UI（默认嵌入二进制）。
 
 ## 构建
+
+默认构建会先编译 `webapp/`，再把构建产物 (`webapp/dist`) 嵌入 Go 二进制：
 
 ```bash
 make build
@@ -16,10 +18,17 @@ make build
 build/clash-composer
 ```
 
+如果不需要前端，可以使用 slim 构建（添加 `noembed` build tag，跳过 `npm install` / `npm run build`）：
+
+```bash
+make build-slim
+```
+
 清理构建产物：
 
 ```bash
-make clean
+make clean        # 仅清理 build/
+make distclean    # 同时清理 webapp/node_modules 和 webapp/dist 内容
 ```
 
 ## 使用
@@ -78,6 +87,32 @@ go run . download https://your-subscription-url
 ```bash
 go run . download https://your-subscription-url > subscription.yaml
 ```
+
+### 3. 启动 HTTP 服务 + Web UI
+
+```bash
+./build/clash-composer serve -config-dir ./configs -token <secret>
+```
+
+- HTTP API 挂载在 `/api/` 前缀下，详见 [docs/http.md](docs/http.md)。
+- 默认构建会同时提供 Web UI；浏览器打开 `http://127.0.0.1:8080/` 即可使用。
+- slim 构建（`make build-slim`）只暴露 `/api/`，根路径会返回 404 提示。
+
+## Web UI 开发
+
+Web UI 源码位于 `webapp/`（React + Vite + TypeScript + Tailwind + shadcn/ui），开发流程：
+
+```bash
+# 终端 1：启动后端
+./build/clash-composer serve -config-dir ./configs -token dev
+
+# 终端 2：启动前端开发服务器（Vite，proxy /api → 127.0.0.1:8080）
+cd webapp
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173/`，登录页输入 token 即可。
 
 ## 示例文件
 

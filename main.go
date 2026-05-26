@@ -2,7 +2,6 @@ package main
 
 import (
 	"clash-composer/composer"
-	"clash-composer/config"
 	"encoding/json"
 	"flag"
 	"log"
@@ -43,6 +42,7 @@ func main() {
 			Addr:      *addr,
 			ConfigDir: *configDir,
 			Token:     *token,
+			WebappFS:  webappFS(),
 		}); err != nil {
 			log.Printf("serve failed: %v", err)
 		}
@@ -76,7 +76,7 @@ func main() {
 		}
 
 		log.Printf("merge execution start: %s", args[1])
-		merged, err := composer.MergeWithOptions(mergeRule, composer.MergeOptions{
+		merged, bytes, err := composer.MergeYAMLWithOptions(mergeRule, composer.MergeOptions{
 			CommandDir: filepath.Dir(mergeFile),
 		})
 		if err != nil {
@@ -85,12 +85,6 @@ func main() {
 		}
 		log.Printf("merge execution complete: proxies=%d groups=%d rules=%d", len(merged.Proxy), len(merged.ProxyGroup), len(merged.Rule))
 
-		log.Println("marshal merged config start")
-		bytes, err = config.MarshalRawConfig(merged)
-		if err != nil {
-			log.Printf("marshal merged config failed: %v", err)
-			return
-		}
 		log.Printf("marshal merged config complete: bytes=%d", len(bytes))
 
 		log.Println("write merged config start: merged.yaml")

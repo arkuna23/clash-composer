@@ -1,12 +1,13 @@
 package composer
 
 import (
-	"clash-composer/config"
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,17 +21,23 @@ import (
 const (
 	defaultServeAddr = "127.0.0.1:8080"
 	defaultGroupName = "default"
+	apiPathPrefix    = "/api"
 )
 
 type ServeOptions struct {
 	Addr      string
 	ConfigDir string
 	Token     string
+	// WebappFS optionally provides a static frontend filesystem rooted at the
+	// SPA build output (e.g. an embedded webapp/dist). If nil, the server only
+	// exposes the JSON API under /api and returns 404 for other paths.
+	WebappFS fs.FS
 }
 
 type httpAPI struct {
 	configDir string
 	token     string
+	webappFS  fs.FS
 }
 
 type apiError struct {
@@ -84,11 +91,25 @@ func newHTTPAPI(options ServeOptions) (*httpAPI, string, error) {
 	return &httpAPI{
 		configDir: realConfigDir,
 		token:     token,
+		webappFS:  options.WebappFS,
 	}, addr, nil
 }
 
 func (api *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	parts, err := splitRequestPath(r.URL.Path)
+	if r.URL.Path == apiPathPrefix || strings.HasPrefix(r.URL.Path, apiPathPrefix+"/") {
+		api.handleAPI(w, r)
+		return
+	}
+	api.handleStatic(w, r)
+}
+
+func (api *httpAPI) handleAPI(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, apiPathPrefix)
+	if trimmed == "" {
+		trimmed = "/"
+	}
+
+	parts, err := splitRequestPath(trimmed)
 	if err != nil {
 		writeAPIError(w, badRequest(err.Error()))
 		return
@@ -115,6 +136,63 @@ func (api *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeAPIError(w, notFound("not found"))
+}
+
+func (api *httpAPI) handleStatic(w http.ResponseWriter, r *http.Request) {
+	if api.webappFS == nil {
+		http.Error(w, "frontend not embedded; rebuild without -tags noembed or use the API at /api/", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeAPIError(w, methodNotAllowed("method not allowed"))
+		return
+	}
+
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if name == "" {
+		api.serveIndex(w, r)
+		return
+	}
+	if strings.Contains(name, "..") {
+		http.NotFound(w, r)
+		return
+	}
+
+	if file, err := api.webappFS.Open(name); err == nil {
+		info, statErr := file.Stat()
+		_ = file.Close()
+		if statErr == nil && !info.IsDir() {
+			http.FileServer(http.FS(api.webappFS)).ServeHTTP(w, r)
+			return
+		}
+	}
+
+	api.serveIndex(w, r)
+}
+
+func (api *httpAPI) serveIndex(w http.ResponseWriter, r *http.Request) {
+	file, err := api.webappFS.Open("index.html")
+	if err != nil {
+		http.Error(w, "frontend not built; run `npm run build` in webapp/ or use -tags noembed", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, "index.html", info.ModTime(), bytes.NewReader(data))
 }
 
 func (api *httpAPI) handleConfigs(w http.ResponseWriter, r *http.Request, parts []string) {
@@ -255,17 +333,11 @@ func (api *httpAPI) handleSubscription(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	merged, mergeErr := MergeWithOptions(mergedRule, MergeOptions{
+	_, data, mergeErr := MergeYAMLWithOptions(mergedRule, MergeOptions{
 		CommandDir: api.configDir,
 	})
 	if mergeErr != nil {
 		writeAPIError(w, internalError("merge config", mergeErr))
-		return
-	}
-
-	data, err := config.MarshalRawConfig(merged)
-	if err != nil {
-		writeAPIError(w, internalError("marshal merged config", err))
 		return
 	}
 

@@ -1,6 +1,6 @@
 # HTTP API
 
-`serve` 命令启动一个本地 HTTP API，用于管理合并规则、下载合并后的订阅，并编辑合并规则引用的模板 YAML。
+`serve` 命令启动一个本地 HTTP API，用于管理合并规则、下载合并后的订阅，并编辑合并规则引用的模板 YAML。所有管理类接口都挂载在 `/api/` 前缀下，根路径与未匹配 `/api/` 的路径会被作为前端 SPA 处理（详见 [Web UI](#web-ui)）。
 
 ## 启动
 
@@ -15,6 +15,16 @@ go run . serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>]
 - merge rule 的 `template` 和本地配置源 `path` 在 serve 模式下必须位于 `config-dir` 内；相对路径会基于 `config-dir` 解析。
 - merge rule 中的 `cmd` 配置源会在 `config-dir` 内执行。
 
+## Web UI
+
+默认构建会通过 `//go:embed` 把 `webapp/dist` 嵌入二进制，访问 `http://127.0.0.1:8080/` 会得到一个 React 单页应用：
+
+- 根路径 `/` 与未匹配 `/api/` 前缀的路径会回落到 SPA 的 `index.html`，便于前端路由（例如 `/configs/demo`）。
+- 静态资源（`/assets/...`）由 `embed.FS` 直接提供。
+- 前端使用 Bearer token 鉴权管理类接口；登录页输入的 token 会保存到浏览器 `localStorage`。
+- 订阅下载链接由前端按 `http://<host>/api/subscriptions/<id>.yaml?token=<token>` 拼出，可直接复制给 Mihomo / Clash。
+- 使用 `go build -tags noembed`（或 `make build-slim`）构建时不嵌入前端，访问根路径会返回 404 提示，仅 `/api/` 可用。
+
 ## 鉴权
 
 管理类接口使用 Bearer token：
@@ -26,7 +36,7 @@ Authorization: Bearer <token>
 订阅下载接口使用 query string token，便于 Mihomo/Clash 客户端订阅：
 
 ```http
-GET /subscriptions/{id}.yaml?token=<token>
+GET /api/subscriptions/{id}.yaml?token=<token>
 ```
 
 ## 通用响应
@@ -55,7 +65,7 @@ GET /subscriptions/{id}.yaml?token=<token>
 ### 列出配置
 
 ```http
-GET /configs
+GET /api/configs
 Authorization: Bearer <token>
 ```
 
@@ -70,7 +80,7 @@ Authorization: Bearer <token>
 ### 创建配置
 
 ```http
-POST /configs/{id}
+POST /api/configs/{id}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -103,7 +113,7 @@ Content-Type: application/json
 ### 获取配置
 
 ```http
-GET /configs/{id}
+GET /api/configs/{id}
 Authorization: Bearer <token>
 ```
 
@@ -112,7 +122,7 @@ Authorization: Bearer <token>
 ### 替换配置
 
 ```http
-PUT /configs/{id}
+PUT /api/configs/{id}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -122,7 +132,7 @@ Content-Type: application/json
 ### 删除配置
 
 ```http
-DELETE /configs/{id}
+DELETE /api/configs/{id}
 Authorization: Bearer <token>
 ```
 
@@ -131,7 +141,7 @@ Authorization: Bearer <token>
 ## 下载合并后的订阅
 
 ```http
-GET /subscriptions/{id}.yaml?token=<token>
+GET /api/subscriptions/{id}.yaml?token=<token>
 ```
 
 - `{id}` 对应 `config-dir` 下的 `<id>.json`。
@@ -142,7 +152,7 @@ GET /subscriptions/{id}.yaml?token=<token>
 示例：
 
 ```bash
-curl 'http://127.0.0.1:8080/subscriptions/demo.yaml?token=secret'
+curl 'http://127.0.0.1:8080/api/subscriptions/demo.yaml?token=secret'
 ```
 
 ## 模板 rule-providers CRUD
@@ -152,7 +162,7 @@ curl 'http://127.0.0.1:8080/subscriptions/demo.yaml?token=secret'
 ### 列出 rule-providers
 
 ```http
-GET /configs/{id}/template/rule-providers
+GET /api/configs/{id}/template/rule-providers
 Authorization: Bearer <token>
 ```
 
@@ -165,7 +175,7 @@ Authorization: Bearer <token>
 ### 创建 rule-provider
 
 ```http
-POST /configs/{id}/template/rule-providers/{name}
+POST /api/configs/{id}/template/rule-providers/{name}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -187,14 +197,14 @@ Content-Type: application/json
 ### 获取 rule-provider
 
 ```http
-GET /configs/{id}/template/rule-providers/{name}
+GET /api/configs/{id}/template/rule-providers/{name}
 Authorization: Bearer <token>
 ```
 
 ### 替换 rule-provider
 
 ```http
-PUT /configs/{id}/template/rule-providers/{name}
+PUT /api/configs/{id}/template/rule-providers/{name}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -204,7 +214,7 @@ Content-Type: application/json
 ### 删除 rule-provider
 
 ```http
-DELETE /configs/{id}/template/rule-providers/{name}
+DELETE /api/configs/{id}/template/rule-providers/{name}
 Authorization: Bearer <token>
 ```
 
@@ -236,7 +246,7 @@ rules:
 ### 列出规则分组
 
 ```http
-GET /configs/{id}/template/rule-groups
+GET /api/configs/{id}/template/rule-groups
 Authorization: Bearer <token>
 ```
 
@@ -258,7 +268,7 @@ Authorization: Bearer <token>
 ### 创建规则分组
 
 ```http
-POST /configs/{id}/template/rule-groups
+POST /api/configs/{id}/template/rule-groups
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -281,14 +291,14 @@ Content-Type: application/json
 ### 获取规则分组
 
 ```http
-GET /configs/{id}/template/rule-groups/{name}
+GET /api/configs/{id}/template/rule-groups/{name}
 Authorization: Bearer <token>
 ```
 
 ### 替换规则分组
 
 ```http
-PUT /configs/{id}/template/rule-groups/{name}
+PUT /api/configs/{id}/template/rule-groups/{name}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -312,7 +322,7 @@ Content-Type: application/json
 ### 删除规则分组
 
 ```http
-DELETE /configs/{id}/template/rule-groups/{name}
+DELETE /api/configs/{id}/template/rule-groups/{name}
 Authorization: Bearer <token>
 ```
 
@@ -321,7 +331,7 @@ Authorization: Bearer <token>
 ### 添加分组内规则
 
 ```http
-POST /configs/{id}/template/rule-groups/{name}/rules
+POST /api/configs/{id}/template/rule-groups/{name}/rules
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -343,7 +353,7 @@ Content-Type: application/json
 ### 获取分组内单条规则
 
 ```http
-GET /configs/{id}/template/rule-groups/{name}/rules/{index}
+GET /api/configs/{id}/template/rule-groups/{name}/rules/{index}
 Authorization: Bearer <token>
 ```
 
@@ -358,7 +368,7 @@ Authorization: Bearer <token>
 ### 替换分组内单条规则
 
 ```http
-PUT /configs/{id}/template/rule-groups/{name}/rules/{index}
+PUT /api/configs/{id}/template/rule-groups/{name}/rules/{index}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
@@ -376,7 +386,7 @@ Content-Type: application/json
 ### 删除分组内单条规则
 
 ```http
-DELETE /configs/{id}/template/rule-groups/{name}/rules/{index}
+DELETE /api/configs/{id}/template/rule-groups/{name}/rules/{index}
 Authorization: Bearer <token>
 ```
 

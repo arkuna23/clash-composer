@@ -41,3 +41,10 @@ temp/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# webapp build artifacts
+webapp/node_modules/
+webapp/dist/*
+!webapp/dist/.placeholder
+webapp/.tsbuildinfo/
+webapp/*.tsbuildinfo
