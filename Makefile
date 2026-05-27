@@ -12,9 +12,9 @@ build: webapp go-build
 # Slim build: skip the webapp and disable embed via the `noembed` build tag.
 build-slim: go-build-slim
 
-# Build the SPA into webapp/dist (runs `npm install` if needed).
+# Build the SPA into webapp/dist (runs `pnpm install` if needed).
 webapp:
-	cd $(WEBAPP_DIR) && npm install && npm run build
+	cd $(WEBAPP_DIR) && pnpm install --frozen-lockfile && pnpm run build
 
 go-build: $(SOURCES) go.mod go.sum | $(BUILD_DIR)/
 	GOCACHE=$(abspath $(GOCACHE)) go build -o $(BINARY) .

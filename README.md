@@ -18,7 +18,7 @@ make build
 build/clash-composer
 ```
 
-如果不需要前端，可以使用 slim 构建（添加 `noembed` build tag，跳过 `npm install` / `npm run build`）：
+如果不需要前端，可以使用 slim 构建（添加 `noembed` build tag，跳过 `pnpm install` / `pnpm run build`）：
 
 ```bash
 make build-slim
@@ -108,8 +108,8 @@ Web UI 源码位于 `webapp/`（React + Vite + TypeScript + Tailwind + shadcn/ui
 
 # 终端 2：启动前端开发服务器（Vite，proxy /api → 127.0.0.1:8080）
 cd webapp
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 打开 `http://127.0.0.1:5173/`，登录页输入 token 即可。

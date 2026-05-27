@@ -31,6 +31,7 @@
 ## Commit & Pull Request Guidelines
 - Match the existing history: short, imperative subjects such as `Refactor config download flow` or `Add logging for merge workflow`.
 - Keep each commit focused on one behavior change.
+- After completing code or documentation changes and passing the relevant tests, create a git commit for the completed work.
 - PRs should describe the user-facing effect, list validation steps, and call out any example or CLI changes.
 
 ## Security & Configuration Tips

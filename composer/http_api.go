@@ -173,7 +173,7 @@ func (api *httpAPI) handleStatic(w http.ResponseWriter, r *http.Request) {
 func (api *httpAPI) serveIndex(w http.ResponseWriter, r *http.Request) {
 	file, err := api.webappFS.Open("index.html")
 	if err != nil {
-		http.Error(w, "frontend not built; run `npm run build` in webapp/ or use -tags noembed", http.StatusNotFound)
+		http.Error(w, "frontend not built; run `pnpm run build` in webapp/ or use -tags noembed", http.StatusNotFound)
 		return
 	}
 	defer file.Close()
