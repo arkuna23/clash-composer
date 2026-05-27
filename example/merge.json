@@ -1,16 +1,25 @@
 {
   "template": "example/template.yaml",
   "configurations": {
-    "High": [
-      {
-        "path": "example/high.yaml"
-      }
-    ],
-    "Common": [
-      {
-        "path": "example/common.yaml"
-      }
-    ]
+    "High": {
+      "sources": [
+        {
+          "path": "example/high.yaml"
+        }
+      ],
+      "includeDirect": true,
+      "includeGroups": [
+        "Common"
+      ]
+    },
+    "Common": {
+      "sources": [
+        {
+          "path": "example/common.yaml"
+        }
+      ],
+      "includeDirect": true
+    }
   },
   "rulesetStrategy": "url-ruleset"
 }

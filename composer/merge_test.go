@@ -152,11 +152,13 @@ proxies:
 		}),
 	})
 
-	configs, err := loadConfigurations(map[string][]ConfigSource{
+	configs, err := loadConfigurations(map[string]ConfigGroup{
 		"Mixed": {
-			{Path: pathFile},
-			{Url: "https://example.com/url.yaml"},
-			{Cmd: fmt.Sprintf("cat %q", cmdFile)},
+			Sources: []ConfigSource{
+				{Path: pathFile},
+				{Url: "https://example.com/url.yaml"},
+				{Cmd: fmt.Sprintf("cat %q", cmdFile)},
+			},
 		},
 	}, MergeOptions{})
 	if err != nil {
@@ -319,9 +321,9 @@ proxies:
 
 	cfg, err := MergeWithOptions(MergeRule{
 		Template: templateFile,
-		Configurations: map[string][]ConfigSource{
+		Configurations: map[string]ConfigGroup{
 			"Cmd": {
-				{Cmd: "cat cmd.yaml"},
+				Sources: []ConfigSource{{Cmd: "cat cmd.yaml"}},
 			},
 		},
 	}, MergeOptions{
@@ -364,9 +366,9 @@ proxies:
 
 	_, data, err := MergeYAMLWithOptions(MergeRule{
 		Template: templateFile,
-		Configurations: map[string][]ConfigSource{
+		Configurations: map[string]ConfigGroup{
 			"Auto": {
-				{Path: proxyFile},
+				Sources: []ConfigSource{{Path: proxyFile}},
 			},
 		},
 	}, MergeOptions{})
@@ -400,6 +402,136 @@ proxies:
 		if strings.Contains(output, unwanted) {
 			t.Fatalf("merged YAML contains template-absent field %q:\n%s", unwanted, output)
 		}
+	}
+}
+
+func TestConfigGroupUnmarshalLegacyArray(t *testing.T) {
+	var rule MergeRule
+	if err := json.Unmarshal([]byte(`{
+		"template": "template.yaml",
+		"configurations": {
+			"Legacy": [
+				{ "path": "legacy.yaml" }
+			]
+		}
+	}`), &rule); err != nil {
+		t.Fatalf("unmarshal legacy rule: %v", err)
+	}
+
+	got := rule.Configurations["Legacy"].Sources
+	if len(got) != 1 || got[0].Path != "legacy.yaml" {
+		t.Fatalf("legacy sources = %#v", got)
+	}
+}
+
+func TestMergeGroupIncludesDirectAndGroups(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte(`
+proxy-groups:
+  - name: TemplateGroup
+    type: select
+    proxies:
+      - DIRECT
+rules: []
+`), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	proxyFile := filepath.Join(dir, "proxy.yaml")
+	if err := os.WriteFile(proxyFile, []byte(`
+proxies:
+  - name: Include-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write proxy fixture: %v", err)
+	}
+
+	cfg, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: map[string]ConfigGroup{
+			"Auto": {
+				Sources:       []ConfigSource{{Path: proxyFile}},
+				IncludeDirect: true,
+				IncludeGroups: []string{"TemplateGroup", "Other"},
+			},
+			"Other": {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("merge includes: %v", err)
+	}
+
+	var auto map[string]any
+	for _, group := range cfg.ProxyGroup {
+		if group["name"] == "Auto" {
+			auto = group
+			break
+		}
+	}
+	if auto == nil {
+		t.Fatalf("missing Auto group: %#v", cfg.ProxyGroup)
+	}
+	got, ok := auto["proxies"].([]string)
+	if !ok {
+		t.Fatalf("Auto proxies type = %T", auto["proxies"])
+	}
+	want := []string{"Auto-UrlTest", "DIRECT", "TemplateGroup", "Other", "Include-Proxy"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Auto proxies = %#v, want %#v", got, want)
+	}
+}
+
+func TestMergeRejectsInvalidGroupIncludes(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("rules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	testCases := []struct {
+		name   string
+		groups map[string]ConfigGroup
+		want   string
+	}{
+		{
+			name: "empty",
+			groups: map[string]ConfigGroup{
+				"Auto": {IncludeGroups: []string{""}},
+			},
+			want: "empty proxy group name",
+		},
+		{
+			name: "self",
+			groups: map[string]ConfigGroup{
+				"Auto": {IncludeGroups: []string{"Auto"}},
+			},
+			want: "cannot include itself",
+		},
+		{
+			name: "missing",
+			groups: map[string]ConfigGroup{
+				"Auto": {IncludeGroups: []string{"Missing"}},
+			},
+			want: "unknown proxy group",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Merge(MergeRule{
+				Template:       templateFile,
+				Configurations: tc.groups,
+			})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not contain %q", err, tc.want)
+			}
+		})
 	}
 }
 

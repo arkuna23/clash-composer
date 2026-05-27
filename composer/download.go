@@ -21,9 +21,9 @@ const (
 var httpClient = &http.Client{Timeout: defaultDownloadTimeout}
 
 type ConfigSource struct {
-	Path string `json:"path"`
-	Url  string `json:"url"`
-	Cmd  string `json:"cmd"`
+	Path string `json:"path,omitempty"`
+	Url  string `json:"url,omitempty"`
+	Cmd  string `json:"cmd,omitempty"`
 }
 
 func loadConfigSource(source ConfigSource, options MergeOptions) (cfg *config.RawConfig, err error) {
@@ -140,14 +140,14 @@ func downloadCommandConfig(command string, dir string) ([]byte, error) {
 	return data, nil
 }
 
-func loadConfigurations(configs map[string][]ConfigSource, options MergeOptions) (map[string][]*config.RawConfig, error) {
+func loadConfigurations(configs map[string]ConfigGroup, options MergeOptions) (map[string][]*config.RawConfig, error) {
 	log.Printf("load configurations start: groups=%d", len(configs))
 	result := make(map[string][]*config.RawConfig)
-	for name, cfg := range configs {
+	for name, group := range configs {
 		groupStart := time.Now()
-		log.Printf("load configuration group start: group=%q sources=%d", name, len(cfg))
-		result[name] = make([]*config.RawConfig, 0, len(cfg))
-		for _, source := range cfg {
+		log.Printf("load configuration group start: group=%q sources=%d", name, len(group.Sources))
+		result[name] = make([]*config.RawConfig, 0, len(group.Sources))
+		for _, source := range group.Sources {
 			c, err := loadConfigSource(source, options)
 			if err != nil {
 				return nil, err

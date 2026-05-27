@@ -2,6 +2,7 @@ package composer
 
 import (
 	"bytes"
+	"clash-composer/config"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -435,11 +436,26 @@ func (api *httpAPI) validateMergeRule(rule MergeRule) error {
 	if _, err := api.resolveManagedPath(rule.Template); err != nil {
 		return fmt.Errorf("template: %w", err)
 	}
-	for group, sources := range rule.Configurations {
+	if templatePath, err := api.resolveExistingManagedPath(rule.Template); err == nil {
+		template, err := os.ReadFile(templatePath)
+		if err != nil {
+			return fmt.Errorf("template: %w", err)
+		}
+		cfg, err := config.UnmarshalRawConfig(template)
+		if err != nil {
+			return fmt.Errorf("template: %w", err)
+		}
+		if err := validateGroupIncludes(rule.Configurations, cfg.ProxyGroup); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("template: %w", err)
+	}
+	for group, configGroup := range rule.Configurations {
 		if strings.TrimSpace(group) == "" {
 			return fmt.Errorf("configuration group name is required")
 		}
-		for _, source := range sources {
+		for _, source := range configGroup.Sources {
 			if err := validateConfigSource(source); err != nil {
 				return err
 			}
@@ -462,10 +478,10 @@ func (api *httpAPI) resolveMergeRule(rule MergeRule) (MergeRule, error) {
 	}
 	next.Template = template
 
-	next.Configurations = make(map[string][]ConfigSource, len(rule.Configurations))
-	for name, sources := range rule.Configurations {
-		copied := make([]ConfigSource, 0, len(sources))
-		for _, source := range sources {
+	next.Configurations = make(map[string]ConfigGroup, len(rule.Configurations))
+	for name, configGroup := range rule.Configurations {
+		copied := make([]ConfigSource, 0, len(configGroup.Sources))
+		for _, source := range configGroup.Sources {
 			if source.Path != "" {
 				path, err := api.resolveExistingManagedPath(source.Path)
 				if err != nil {
@@ -475,7 +491,8 @@ func (api *httpAPI) resolveMergeRule(rule MergeRule) (MergeRule, error) {
 			}
 			copied = append(copied, source)
 		}
-		next.Configurations[name] = copied
+		configGroup.Sources = copied
+		next.Configurations[name] = configGroup
 	}
 
 	return next, nil

@@ -7,9 +7,15 @@ export interface ConfigSource {
   cmd?: string;
 }
 
+export interface ConfigGroup {
+  sources?: ConfigSource[];
+  includeDirect?: boolean;
+  includeGroups?: string[];
+}
+
 export interface MergeRule {
   template: string;
-  configurations: Record<string, ConfigSource[]>;
+  configurations: Record<string, ConfigGroup | ConfigSource[]>;
   rulesetStrategy?: RulesetStrategy;
 }
 

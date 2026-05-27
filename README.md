@@ -57,18 +57,27 @@ merged.yaml
 {
   "template": "example/template.yaml",
   "configurations": {
-    "High": [
-      { "path": "example/high.yaml" }
-    ],
-    "Common": [
-      { "path": "example/common.yaml" }
-    ]
+    "High": {
+      "sources": [
+        { "path": "example/high.yaml" }
+      ],
+      "includeDirect": true,
+      "includeGroups": ["Common"]
+    },
+    "Common": {
+      "sources": [
+        { "path": "example/common.yaml" }
+      ],
+      "includeDirect": true
+    }
   },
   "rulesetStrategy": "url-ruleset"
 }
 ```
 
-配置来源支持三种形式，且每项只能设置一种：
+每个配置分组会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`includeDirect` 会把 `DIRECT` 插入到 select 分组中，`includeGroups` 可以插入其他已有分组名或其他配置分组名用于分流。
+
+配置来源 `sources` 支持三种形式，且每项只能设置一种：
 
 - `path`: 从本地文件读取
 - `url`: 从 HTTP 订阅地址下载

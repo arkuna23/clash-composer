@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { updateConfig } from "@/api/configs";
-import type { ConfigSource, MergeRule } from "@/api/types";
+import type { ConfigGroup, ConfigSource, MergeRule } from "@/api/types";
 
 type SourceKind = "path" | "url" | "cmd";
 
@@ -25,6 +25,8 @@ interface SourceDraft {
 
 interface GroupDraft {
   name: string;
+  includeDirect: boolean;
+  includeGroups: string;
   sources: SourceDraft[];
 }
 
@@ -52,23 +54,44 @@ function draftToSource(draft: SourceDraft): ConfigSource {
   }
 }
 
-function ruleToDrafts(rule: MergeRule): GroupDraft[] {
-  const groups = rule.configurations ?? {};
-  return Object.keys(groups).map((name) => ({
-    name,
-    sources: groups[name].map(sourceToDraft),
-  }));
+function normalizeConfigGroup(group: ConfigGroup | ConfigSource[]): ConfigGroup {
+  if (Array.isArray(group)) {
+    return { sources: group };
+  }
+  return group;
 }
 
-function draftsToConfigurations(
-  drafts: GroupDraft[],
-): Record<string, ConfigSource[]> {
-  const result: Record<string, ConfigSource[]> = {};
+function ruleToDrafts(rule: MergeRule): GroupDraft[] {
+  const groups = rule.configurations ?? {};
+  return Object.keys(groups).map((name) => {
+    const group = normalizeConfigGroup(groups[name]);
+    return {
+      name,
+      includeDirect: group.includeDirect ?? false,
+      includeGroups: (group.includeGroups ?? []).join(", "),
+      sources: (group.sources ?? []).map(sourceToDraft),
+    };
+  });
+}
+
+function parseIncludeGroups(value: string): string[] {
+  return value
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function draftsToConfigurations(drafts: GroupDraft[]): Record<string, ConfigGroup> {
+  const result: Record<string, ConfigGroup> = {};
   for (const draft of drafts) {
     if (!draft.name.trim()) {
       continue;
     }
-    result[draft.name.trim()] = draft.sources.map(draftToSource);
+    result[draft.name.trim()] = {
+      sources: draft.sources.map(draftToSource),
+      includeDirect: draft.includeDirect,
+      includeGroups: parseIncludeGroups(draft.includeGroups),
+    };
   }
   return result;
 }
@@ -123,7 +146,10 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
       toast.error(t("sources.groupExists"));
       return;
     }
-    setDrafts((prev) => [...prev, { name, sources: [] }]);
+    setDrafts((prev) => [
+      ...prev,
+      { name, includeDirect: false, includeGroups: "", sources: [] },
+    ]);
     setNewGroupName("");
   };
 
@@ -163,6 +189,14 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
     [next[sourceIndex], next[target]] = [next[target], next[sourceIndex]];
     group.sources = next;
     updateGroup(groupIndex, group);
+  };
+
+  const updateIncludeDirect = (groupIndex: number, includeDirect: boolean) => {
+    updateGroup(groupIndex, { ...drafts[groupIndex], includeDirect });
+  };
+
+  const updateIncludeGroups = (groupIndex: number, includeGroups: string) => {
+    updateGroup(groupIndex, { ...drafts[groupIndex], includeGroups });
   };
 
   const valuePlaceholder = (kind: SourceKind) => {
@@ -227,6 +261,35 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                   >
                     <Trash2 className="h-4 w-4" aria-hidden />
                   </Button>
+                </div>
+              </div>
+              <div className="grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,12rem)_1fr] sm:items-center">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={group.includeDirect}
+                    onChange={(event) =>
+                      updateIncludeDirect(groupIndex, event.target.checked)
+                    }
+                    className="h-4 w-4 shrink-0 rounded border-input"
+                  />
+                  <span>{t("sources.includeDirect")}</span>
+                </label>
+                <div className="space-y-1">
+                  <Label htmlFor={`include-groups-${groupIndex}`}>
+                    {t("sources.includeGroups")}
+                  </Label>
+                  <Input
+                    id={`include-groups-${groupIndex}`}
+                    value={group.includeGroups}
+                    onChange={(event) =>
+                      updateIncludeGroups(groupIndex, event.target.value)
+                    }
+                    placeholder={t("sources.includeGroupsPlaceholder")}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("sources.includeGroupsHelp")}
+                  </p>
                 </div>
               </div>
               {group.sources.length === 0 ? (

@@ -35,8 +35,11 @@ proxies:
 	api := newTestAPI(t, dir)
 	rule := MergeRule{
 		Template: "template.yaml",
-		Configurations: map[string][]ConfigSource{
-			"Auto": {{Path: "proxy.yaml"}},
+		Configurations: map[string]ConfigGroup{
+			"Auto": {
+				Sources:       []ConfigSource{{Path: "proxy.yaml"}},
+				IncludeDirect: true,
+			},
 		},
 		RulesetStrategy: UrlRuleset,
 	}
@@ -62,7 +65,7 @@ proxies:
 	resp = performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
 	assertStatus(t, resp, http.StatusOK)
 	body := resp.Body.String()
-	for _, want := range []string{"Test-Proxy", "Auto-UrlTest", "MATCH,DIRECT"} {
+	for _, want := range []string{"Test-Proxy", "Auto-UrlTest", "DIRECT", "MATCH,DIRECT"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("subscription body missing %q:\n%s", want, body)
 		}
@@ -76,6 +79,48 @@ proxies:
 
 	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo", nil, true)
 	assertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestHTTPAPINormalizesLegacyConfigurationGroups(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", "rules: []\n")
+	writeTestFile(t, dir, "demo.json", `{
+  "template": "template.yaml",
+  "configurations": {
+    "Legacy": [
+      {
+        "path": "proxy.yaml"
+      }
+    ]
+  }
+}
+`)
+
+	api := newTestAPI(t, dir)
+	resp := performRequest(t, api, http.MethodGet, "/api/configs/demo", nil, true)
+	assertStatus(t, resp, http.StatusOK)
+	if !strings.Contains(resp.Body.String(), `"sources":[{"path":"proxy.yaml"`) {
+		t.Fatalf("legacy group was not normalized: %s", resp.Body.String())
+	}
+}
+
+func TestHTTPAPIRejectsInvalidGroupIncludes(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", "rules: []\n")
+
+	api := newTestAPI(t, dir)
+	rule := MergeRule{
+		Template: "template.yaml",
+		Configurations: map[string]ConfigGroup{
+			"Auto": {IncludeGroups: []string{"Missing"}},
+		},
+	}
+
+	resp := performJSONRequest(t, api, http.MethodPost, "/api/configs/demo", rule, true)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if !strings.Contains(resp.Body.String(), "unknown proxy group") {
+		t.Fatalf("unexpected response: %s", resp.Body.String())
+	}
 }
 
 func TestHTTPAPIRuleProvidersCRUD(t *testing.T) {

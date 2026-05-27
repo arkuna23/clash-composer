@@ -2,9 +2,11 @@ package composer
 
 import (
 	"clash-composer/config"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -18,9 +20,31 @@ const (
 )
 
 type MergeRule struct {
-	Template        string                    `json:"template"`
-	Configurations  map[string][]ConfigSource `json:"configurations"` // proxy group name: config
-	RulesetStrategy RulesetStrategy           `json:"rulesetStrategy"`
+	Template        string                 `json:"template"`
+	Configurations  map[string]ConfigGroup `json:"configurations"` // proxy group name: config
+	RulesetStrategy RulesetStrategy        `json:"rulesetStrategy"`
+}
+
+type ConfigGroup struct {
+	Sources       []ConfigSource `json:"sources,omitempty"`
+	IncludeDirect bool           `json:"includeDirect,omitempty"`
+	IncludeGroups []string       `json:"includeGroups,omitempty"`
+}
+
+func (g *ConfigGroup) UnmarshalJSON(data []byte) error {
+	var sources []ConfigSource
+	if err := json.Unmarshal(data, &sources); err == nil {
+		*g = ConfigGroup{Sources: sources}
+		return nil
+	}
+
+	type configGroup ConfigGroup
+	var next configGroup
+	if err := json.Unmarshal(data, &next); err != nil {
+		return err
+	}
+	*g = ConfigGroup(next)
+	return nil
 }
 
 // MergeOptions controls optional merge behavior that is not part of the JSON rule.
@@ -38,7 +62,7 @@ func mergeProxies(template *config.RawConfig, configs []*config.RawConfig) {
 	log.Printf("merge proxies complete: total=%d", len(template.Proxy))
 }
 
-func appendProxyGroup(template *config.RawConfig, name string, configs []*config.RawConfig) error {
+func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup, configs []*config.RawConfig) error {
 	log.Printf("append proxy group start: group=%q sources=%d", name, len(configs))
 	length := 0
 	for _, cfg := range configs {
@@ -66,6 +90,7 @@ func appendProxyGroup(template *config.RawConfig, name string, configs []*config
 
 	proxiesSelect := make([]string, 0, len(proxies)+1)
 	proxiesSelect = append(proxiesSelect, name+"-UrlTest")
+	proxiesSelect = append(proxiesSelect, proxyGroupIncludes(group)...)
 	proxiesSelect = append(proxiesSelect, proxies...)
 	template.ProxyGroup = append(template.ProxyGroup, map[string]any{
 		"name":    name,
@@ -75,6 +100,24 @@ func appendProxyGroup(template *config.RawConfig, name string, configs []*config
 
 	log.Printf("append proxy group complete: group=%q proxies=%d", name, len(proxiesSelect))
 	return nil
+}
+
+func proxyGroupIncludes(group ConfigGroup) []string {
+	includes := []string{}
+	seen := map[string]bool{}
+	if group.IncludeDirect {
+		includes = append(includes, "DIRECT")
+		seen["DIRECT"] = true
+	}
+	for _, name := range group.IncludeGroups {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		includes = append(includes, name)
+		seen[name] = true
+	}
+	return includes
 }
 
 func Merge(rule MergeRule) (*config.RawConfig, error) {
@@ -118,6 +161,9 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 		return nil, err
 	}
 	log.Printf("parse template complete: %s proxies=%d rules=%d", rule.Template, len(newConfig.Proxy), len(newConfig.Rule))
+	if err := validateGroupIncludes(rule.Configurations, newConfig.ProxyGroup); err != nil {
+		return nil, err
+	}
 
 	configurations, err := loadConfigurations(rule.Configurations, options)
 	if err != nil {
@@ -130,7 +176,7 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 	}
 
 	for name, cfg := range configurations {
-		if err := appendProxyGroup(newConfig, name, cfg); err != nil {
+		if err := appendProxyGroup(newConfig, name, rule.Configurations[name], cfg); err != nil {
 			log.Printf("append proxy group failed: group=%q err=%v", name, err)
 			return nil, err
 		}
@@ -138,6 +184,37 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 
 	log.Printf("merge complete: elapsed=%s proxies=%d groups=%d rules=%d", time.Since(start), len(newConfig.Proxy), len(newConfig.ProxyGroup), len(newConfig.Rule))
 	return newConfig, nil
+}
+
+func validateGroupIncludes(groups map[string]ConfigGroup, templateGroups []map[string]any) error {
+	available := map[string]bool{
+		"DIRECT": true,
+		"REJECT": true,
+	}
+	for name := range groups {
+		available[name] = true
+	}
+	for _, group := range templateGroups {
+		if name, ok := group["name"].(string); ok && strings.TrimSpace(name) != "" {
+			available[name] = true
+		}
+	}
+
+	for groupName, group := range groups {
+		for _, include := range group.IncludeGroups {
+			include = strings.TrimSpace(include)
+			if include == "" {
+				return fmt.Errorf("configuration group %q includes an empty proxy group name", groupName)
+			}
+			if include == groupName {
+				return fmt.Errorf("configuration group %q cannot include itself", groupName)
+			}
+			if !available[include] {
+				return fmt.Errorf("configuration group %q includes unknown proxy group %q", groupName, include)
+			}
+		}
+	}
+	return nil
 }
 
 func renderMergedTemplateYAML(templatePath string, merged *config.RawConfig) ([]byte, error) {

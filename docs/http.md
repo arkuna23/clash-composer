@@ -91,22 +91,31 @@ Content-Type: application/json
 {
   "template": "template.yaml",
   "configurations": {
-    "High": [
-      {
-        "path": "high.yaml"
-      }
-    ],
-    "Common": [
-      {
-        "url": "https://example.com/subscription.yaml"
-      }
-    ]
+    "High": {
+      "sources": [
+        {
+          "path": "high.yaml"
+        }
+      ],
+      "includeDirect": true,
+      "includeGroups": ["Common"]
+    },
+    "Common": {
+      "sources": [
+        {
+          "url": "https://example.com/subscription.yaml"
+        }
+      ],
+      "includeDirect": true
+    }
   },
   "rulesetStrategy": "url-ruleset"
 }
 ```
 
-配置源支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
+每个配置分组的 `sources` 支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
+
+`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组；`includeGroups` 可以插入其他配置分组名、模板中已有的 proxy group 名称，或内置的 `DIRECT` / `REJECT`。旧版数组结构仍可读取，API 返回时会规范化为对象结构。
 
 创建成功返回 `201 Created` 和保存后的 JSON。若配置已存在，返回 `409 Conflict`。
 
