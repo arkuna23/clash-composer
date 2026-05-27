@@ -112,16 +112,16 @@ go run . download https://your-subscription-url > subscription.yaml
 Web UI 源码位于 `webapp/`（React + Vite + TypeScript + Tailwind + shadcn/ui），开发流程：
 
 ```bash
-# 终端 1：启动后端
-./build/clash-composer serve -config-dir ./configs -token dev
-
-# 终端 2：启动前端开发服务器（Vite，proxy /api → 127.0.0.1:8080）
-cd webapp
-pnpm install
-pnpm run dev
+make dev
 ```
 
-打开 `http://127.0.0.1:5173/`，登录页输入 token 即可。
+`make dev` 会先构建后端，再启动测试后端和 Vite 前端。默认后端监听 `127.0.0.1:8080`，配置目录为 `./configs`，登录 token 为 `dev`。打开 `http://127.0.0.1:5173/` 即可。
+
+可以通过 Make 变量覆盖默认值：
+
+```bash
+make dev DEV_CONFIG_DIR=./configs DEV_TOKEN=dev DEV_ADDR=127.0.0.1:8080
+```
 
 ## 示例文件
 
