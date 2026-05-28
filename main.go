@@ -4,6 +4,7 @@ import (
 	"clash-composer/composer"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 var version = "v0.1.0"
 
 func main() {
+	flag.Usage = printUsage
 	flag.Parse()
 	args := flag.Args()
 
@@ -25,8 +27,13 @@ func main() {
 		log.Printf("command start: version")
 		_, _ = os.Stdout.WriteString(version + "\n")
 	case "serve":
-		log.Printf("command start: serve args=%v", args[1:])
 		serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
+		serveFlags.Usage = func() {
+			fmt.Fprintln(serveFlags.Output(), "Usage: clash-composer serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>]")
+			fmt.Fprintln(serveFlags.Output())
+			fmt.Fprintln(serveFlags.Output(), "Options:")
+			serveFlags.PrintDefaults()
+		}
 		addr := serveFlags.String("addr", "127.0.0.1:8080", "HTTP listen address")
 		configDir := serveFlags.String("config-dir", "", "directory for API-managed merge config files")
 		token := serveFlags.String("token", "", "HTTP API token; defaults to CLASH_COMPOSER_TOKEN")
@@ -38,6 +45,7 @@ func main() {
 			log.Println("Usage: clash-composer serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>]")
 			return
 		}
+		log.Printf("command start: serve args=%v", args[1:])
 		if err := composer.ServeHTTPAPI(composer.ServeOptions{
 			Addr:      *addr,
 			ConfigDir: *configDir,
@@ -119,7 +127,15 @@ func main() {
 }
 
 func printUsage() {
-	log.Printf("clash-composer %s", version)
-	log.Println("Usage: clash-composer <command> [args]")
-	log.Println("Commands: version, serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>], merge <config-file>, download <subscription-url>")
+	output := flag.CommandLine.Output()
+	fmt.Fprintf(output, "clash-composer %s\n", version)
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Usage:")
+	fmt.Fprintln(output, "  clash-composer <command> [args]")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Commands:")
+	fmt.Fprintln(output, "  version")
+	fmt.Fprintln(output, "  serve -config-dir <dir> [-addr 127.0.0.1:8080] [-token <token>]")
+	fmt.Fprintln(output, "  merge <config-file>")
+	fmt.Fprintln(output, "  download <subscription-url>")
 }
