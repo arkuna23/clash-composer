@@ -647,8 +647,8 @@ proxies:
 	for _, groupName := range []string{"Left-UrlTest", "Left", "Right-UrlTest", "Right"} {
 		references += proxyNameCountInList(proxyGroupNames(t, cfg, groupName), "Shared")
 	}
-	if references != 2 {
-		t.Fatalf("Shared proxy group references = %d, want 2", references)
+	if references != 4 {
+		t.Fatalf("Shared proxy group references = %d, want 4", references)
 	}
 }
 

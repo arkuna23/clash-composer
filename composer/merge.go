@@ -52,42 +52,24 @@ type MergeOptions struct {
 	CommandDir string
 }
 
-func mergeProxies(template *config.RawConfig, configs []*config.RawConfig) {
+func mergeProxies(template *config.RawConfig, configs []*config.RawConfig, seen map[string]bool) error {
 	log.Printf("merge proxies start: sources=%d", len(configs))
 	for _, cfg := range configs {
 		for _, proxy := range cfg.Proxy {
+			name, err := proxyName(proxy)
+			if err != nil {
+				return err
+			}
+			if seen[name] {
+				log.Printf("skip duplicate proxy definition: name=%q", name)
+				continue
+			}
+			seen[name] = true
 			template.Proxy = append(template.Proxy, proxy)
 		}
 	}
 	log.Printf("merge proxies complete: total=%d", len(template.Proxy))
-}
-
-func dedupeConfigurationProxies(configurations map[string][]*config.RawConfig) (map[string][]*config.RawConfig, error) {
-	seen := map[string]bool{}
-	deduped := make(map[string][]*config.RawConfig, len(configurations))
-
-	for groupName, configs := range configurations {
-		deduped[groupName] = make([]*config.RawConfig, 0, len(configs))
-		for _, cfg := range configs {
-			next := *cfg
-			next.Proxy = make([]map[string]any, 0, len(cfg.Proxy))
-			for _, proxy := range cfg.Proxy {
-				name, err := proxyName(proxy)
-				if err != nil {
-					return nil, err
-				}
-				if seen[name] {
-					log.Printf("skip duplicate proxy: group=%q name=%q", groupName, name)
-					continue
-				}
-				seen[name] = true
-				next.Proxy = append(next.Proxy, proxy)
-			}
-			deduped[groupName] = append(deduped[groupName], &next)
-		}
-	}
-
-	return deduped, nil
+	return nil
 }
 
 func proxyName(proxy map[string]any) (string, error) {
@@ -110,12 +92,17 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 	}
 
 	proxies := make([]string, 0, length)
+	seen := map[string]bool{}
 	for _, cfg := range configs {
 		for _, proxy := range cfg.Proxy {
 			name, err := proxyName(proxy)
 			if err != nil {
 				return err
 			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
 			proxies = append(proxies, name)
 		}
 	}
@@ -210,14 +197,13 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 		log.Printf("load configurations failed: err=%v", err)
 		return nil, err
 	}
-	configurations, err = dedupeConfigurationProxies(configurations)
-	if err != nil {
-		log.Printf("dedupe configuration proxies failed: err=%v", err)
-		return nil, err
-	}
 
+	seenProxyNames := map[string]bool{}
 	for _, cfg := range configurations {
-		mergeProxies(newConfig, cfg)
+		if err := mergeProxies(newConfig, cfg, seenProxyNames); err != nil {
+			log.Printf("merge proxies failed: err=%v", err)
+			return nil, err
+		}
 	}
 
 	for name, cfg := range configurations {
