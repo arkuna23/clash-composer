@@ -10,7 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"clash-composer/config"
 )
 
 func TestMergeExample(t *testing.T) {
@@ -177,6 +181,134 @@ proxies:
 	}
 	if got[2].Proxy[0]["name"] != "Cmd-Proxy" {
 		t.Fatalf("cmd config not loaded: %#v", got[2].Proxy)
+	}
+}
+
+func TestLoadConfigurationsLoadsSourcesConcurrentlyWithLimit(t *testing.T) {
+	const totalSources = maxConcurrentSources + 4
+	started := make(chan struct{}, totalSources)
+	release := make(chan struct{})
+	var active int32
+	var maxActive int32
+
+	restoreHTTPClient(t, &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			current := atomic.AddInt32(&active, 1)
+			for {
+				previous := atomic.LoadInt32(&maxActive)
+				if current <= previous || atomic.CompareAndSwapInt32(&maxActive, previous, current) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			atomic.AddInt32(&active, -1)
+
+			name := req.URL.Query().Get("name")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`
+proxies:
+  - name: %s
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`, name))),
+				Header: make(http.Header),
+			}, nil
+		}),
+	})
+
+	sources := make([]ConfigSource, 0, totalSources)
+	for i := range totalSources {
+		sources = append(sources, ConfigSource{
+			Url: fmt.Sprintf("https://example.com/config.yaml?name=Proxy-%02d", i),
+		})
+	}
+
+	type loadResult struct {
+		configs map[string][]*config.RawConfig
+		err     error
+	}
+	done := make(chan loadResult, 1)
+	go func() {
+		configs, err := loadConfigurations(map[string]ConfigGroup{
+			"Concurrent": {Sources: sources},
+		}, MergeOptions{})
+		done <- loadResult{configs: configs, err: err}
+	}()
+
+	for i := 0; i < maxConcurrentSources; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for source %d to start", i)
+		}
+	}
+	select {
+	case <-started:
+		t.Fatalf("more than %d sources started before release", maxConcurrentSources)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("load configurations: %v", result.err)
+	}
+	if got := atomic.LoadInt32(&maxActive); got != maxConcurrentSources {
+		t.Fatalf("max active = %d, want %d", got, maxConcurrentSources)
+	}
+
+	got := result.configs["Concurrent"]
+	if len(got) != totalSources {
+		t.Fatalf("len(Concurrent) = %d, want %d", len(got), totalSources)
+	}
+	for i, cfg := range got {
+		want := fmt.Sprintf("Proxy-%02d", i)
+		if cfg.Proxy[0]["name"] != want {
+			t.Fatalf("proxy[%d] = %q, want %q", i, cfg.Proxy[0]["name"], want)
+		}
+	}
+}
+
+func TestLoadConfigurationsReturnsConcurrentSourceError(t *testing.T) {
+	restoreHTTPClient(t, &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			status := http.StatusOK
+			body := `
+proxies:
+  - name: OK
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`
+			if strings.Contains(req.URL.RawQuery, "bad=true") {
+				status = http.StatusBadGateway
+				body = "bad gateway"
+			}
+			return &http.Response{
+				StatusCode: status,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	_, err := loadConfigurations(map[string]ConfigGroup{
+		"Concurrent": {
+			Sources: []ConfigSource{
+				{Url: "https://example.com/ok.yaml"},
+				{Url: "https://example.com/bad.yaml?bad=true"},
+				{Url: "https://example.com/also-ok.yaml"},
+			},
+		},
+	}, MergeOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unexpected status 502") {
+		t.Fatalf("error %q does not contain status context", err)
 	}
 }
 

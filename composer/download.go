@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	defaultDownloadTimeout = 5 * time.Second
+	maxConcurrentSources   = 8
 	clashVergeUserAgent    = "clash-verge/v2.0.4"
 )
 
@@ -142,21 +144,51 @@ func downloadCommandConfig(command string, dir string) ([]byte, error) {
 
 func loadConfigurations(configs map[string]ConfigGroup, options MergeOptions) (map[string][]*config.RawConfig, error) {
 	log.Printf("load configurations start: groups=%d", len(configs))
-	result := make(map[string][]*config.RawConfig)
+	start := time.Now()
+	result := make(map[string][]*config.RawConfig, len(configs))
+	groupStarts := make(map[string]time.Time, len(configs))
+	sem := make(chan struct{}, maxConcurrentSources)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+
 	for name, group := range configs {
 		groupStart := time.Now()
+		groupStarts[name] = groupStart
 		log.Printf("load configuration group start: group=%q sources=%d", name, len(group.Sources))
-		result[name] = make([]*config.RawConfig, 0, len(group.Sources))
-		for _, source := range group.Sources {
-			c, err := loadConfigSource(source, options)
-			if err != nil {
-				return nil, err
-			}
-			result[name] = append(result[name], c)
+		result[name] = make([]*config.RawConfig, len(group.Sources))
+		for i, source := range group.Sources {
+			wg.Add(1)
+			go func(groupName string, sourceIndex int, source ConfigSource) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() {
+					<-sem
+				}()
+
+				c, err := loadConfigSource(source, options)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+					return
+				}
+				result[groupName][sourceIndex] = c
+			}(name, i, source)
 		}
-		log.Printf("load configuration group complete: group=%q elapsed=%s configs=%d", name, time.Since(groupStart), len(result[name]))
 	}
-	log.Printf("load configurations complete: groups=%d", len(result))
+
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	for name, cfg := range result {
+		log.Printf("load configuration group complete: group=%q elapsed=%s configs=%d", name, time.Since(groupStarts[name]), len(cfg))
+	}
+	log.Printf("load configurations complete: groups=%d elapsed=%s", len(result), time.Since(start))
 	return result, nil
 }
 
