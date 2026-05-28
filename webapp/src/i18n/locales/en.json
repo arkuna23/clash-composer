@@ -52,6 +52,17 @@
     "deleteSuccess": "Configuration {{id}} deleted.",
     "openDetail": "Open"
   },
+  "files": {
+    "upload": "Upload file",
+    "uploadTitle": "Upload YAML file",
+    "uploadDescription": "Save a template or proxy source file under config-dir.",
+    "fileLabel": "YAML file",
+    "pathLabel": "Save path",
+    "pathPlaceholder": "e.g. templates/base.yaml",
+    "pathHelp": "Use a relative .yaml or .yml path. Subdirectories are created automatically.",
+    "overwrite": "Overwrite existing file",
+    "uploadSuccess": "Uploaded {{path}}."
+  },
   "detail": {
     "tabOverview": "Overview",
     "tabSources": "Sources",

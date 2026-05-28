@@ -3,6 +3,8 @@ package composer
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -121,6 +123,109 @@ func TestHTTPAPIRejectsInvalidGroupIncludes(t *testing.T) {
 	if !strings.Contains(resp.Body.String(), "unknown proxy group") {
 		t.Fatalf("unexpected response: %s", resp.Body.String())
 	}
+}
+
+func TestHTTPAPIUploadFile(t *testing.T) {
+	dir := t.TempDir()
+	api := newTestAPI(t, dir)
+
+	resp := performUploadRequest(t, api, "/api/files?path=templates/base.yaml", "base.yaml", []byte("rules: []\n"), true)
+	assertStatus(t, resp, http.StatusCreated)
+
+	var result uploadFileResponse
+	decodeResponse(t, resp, &result)
+	if result.Path != "templates/base.yaml" || result.Size != len("rules: []\n") {
+		t.Fatalf("upload response = %#v", result)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "templates", "base.yaml"))
+	if err != nil {
+		t.Fatalf("read uploaded file: %v", err)
+	}
+	if string(data) != "rules: []\n" {
+		t.Fatalf("uploaded content = %q", string(data))
+	}
+
+	resp = performUploadRequest(t, api, "/api/files?path=templates/base.yaml", "base.yaml", []byte("mixed-port: 7890\n"), true)
+	assertStatus(t, resp, http.StatusConflict)
+
+	resp = performUploadRequest(t, api, "/api/files?path=templates/base.yaml&overwrite=true", "base.yaml", []byte("mixed-port: 7890\n"), true)
+	assertStatus(t, resp, http.StatusCreated)
+	data, err = os.ReadFile(filepath.Join(dir, "templates", "base.yaml"))
+	if err != nil {
+		t.Fatalf("read overwritten file: %v", err)
+	}
+	if string(data) != "mixed-port: 7890\n" {
+		t.Fatalf("overwritten content = %q", string(data))
+	}
+}
+
+func TestHTTPAPIUploadFileValidation(t *testing.T) {
+	dir := t.TempDir()
+	api := newTestAPI(t, dir)
+
+	testCases := []struct {
+		name   string
+		target string
+		body   []byte
+		want   int
+	}{
+		{
+			name:   "empty path",
+			target: "/api/files?path=",
+			body:   []byte("rules: []\n"),
+			want:   http.StatusBadRequest,
+		},
+		{
+			name:   "escaping path",
+			target: "/api/files?path=../escape.yaml",
+			body:   []byte("rules: []\n"),
+			want:   http.StatusBadRequest,
+		},
+		{
+			name:   "json extension",
+			target: "/api/files?path=config.json",
+			body:   []byte("{}\n"),
+			want:   http.StatusBadRequest,
+		},
+		{
+			name:   "missing extension",
+			target: "/api/files?path=config",
+			body:   []byte("rules: []\n"),
+			want:   http.StatusBadRequest,
+		},
+		{
+			name:   "empty file",
+			target: "/api/files?path=empty.yaml",
+			body:   []byte{},
+			want:   http.StatusBadRequest,
+		},
+		{
+			name:   "invalid overwrite",
+			target: "/api/files?path=base.yaml&overwrite=maybe",
+			body:   []byte("rules: []\n"),
+			want:   http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performUploadRequest(t, api, tc.target, "config.yaml", tc.body, true)
+			assertStatus(t, resp, tc.want)
+		})
+	}
+}
+
+func TestHTTPAPIUploadRejectsSymlinkParent(t *testing.T) {
+	dir := t.TempDir()
+	targetDir := t.TempDir()
+	if err := os.Symlink(targetDir, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	api := newTestAPI(t, dir)
+	resp := performUploadRequest(t, api, "/api/files?path=linked/base.yaml", "base.yaml", []byte("rules: []\n"), true)
+	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestHTTPAPIRuleProvidersCRUD(t *testing.T) {
@@ -346,6 +451,32 @@ func performRequest(t *testing.T, api http.Handler, method, target string, body 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if auth {
+		req.Header.Set("Authorization", "Bearer "+testAPIToken)
+	}
+	resp := httptest.NewRecorder()
+	api.ServeHTTP(resp, req)
+	return resp
+}
+
+func performUploadRequest(t *testing.T, api http.Handler, target, filename string, content []byte, auth bool) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("create upload field: %v", err)
+	}
+	if _, err := io.Copy(part, bytes.NewReader(content)); err != nil {
+		t.Fatalf("write upload field: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, target, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	if auth {
 		req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	}

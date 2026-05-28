@@ -23,6 +23,11 @@ export interface ConfigListResponse {
   configs: string[];
 }
 
+export interface UploadFileResponse {
+  path: string;
+  size: number;
+}
+
 // Generic provider object: rule-providers entries are arbitrary YAML maps.
 export type RuleProvider = Record<string, unknown>;
 

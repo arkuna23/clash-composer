@@ -1,8 +1,8 @@
-import { FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, FilePlus2 } from "lucide-react";
+import { Plus, Trash2, FilePlus2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/table";
 import { ApiError } from "@/api/client";
 import { createConfig, deleteConfig, listConfigs } from "@/api/configs";
+import { uploadFile } from "@/api/files";
 import type { MergeRule, RulesetStrategy } from "@/api/types";
 
 const RULESET_STRATEGIES: { value: RulesetStrategy; label: string }[] = [
@@ -52,6 +53,7 @@ export function ConfigListPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const listQuery = useQuery({
     queryKey: ["configs"],
@@ -79,15 +81,25 @@ export function ConfigListPage() {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <CardTitle className="text-xl">{t("configs.title")}</CardTitle>
             <CardDescription>{t("app.subtitle")}</CardDescription>
           </div>
-          <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" aria-hidden />
-            {t("configs.create")}
-          </Button>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <Button
+              variant="outline"
+              onClick={() => setUploadOpen(true)}
+              className="gap-1.5"
+            >
+              <Upload className="h-4 w-4" aria-hidden />
+              {t("files.upload")}
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("configs.create")}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {listQuery.isLoading ? (
@@ -162,7 +174,118 @@ export function ConfigListPage() {
           navigate(`/configs/${encodeURIComponent(id)}`);
         }}
       />
+      <UploadFileDialog open={uploadOpen} onOpenChange={setUploadOpen} />
     </div>
+  );
+}
+
+interface UploadFileDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
+  const { t } = useTranslation();
+  const [file, setFile] = useState<File | null>(null);
+  const [path, setPath] = useState("");
+  const [overwrite, setOverwrite] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const reset = () => {
+    setFile(null);
+    setPath("");
+    setOverwrite(false);
+  };
+
+  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    setFile(nextFile);
+    if (nextFile && path.trim() === "") {
+      setPath(nextFile.name);
+    }
+  };
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!file || !path.trim()) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await uploadFile(path.trim(), file, overwrite);
+      toast.success(t("files.uploadSuccess", { path: result.path }));
+      reset();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(t("errors.generic", { message: (error as Error).message }));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen);
+        if (!nextOpen) {
+          reset();
+        }
+      }}
+    >
+      <DialogContent>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>{t("files.uploadTitle")}</DialogTitle>
+            <DialogDescription>{t("files.uploadDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="upload-file">{t("files.fileLabel")}</Label>
+            <Input
+              id="upload-file"
+              type="file"
+              accept=".yaml,.yml"
+              onChange={onFileChange}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="upload-path">{t("files.pathLabel")}</Label>
+            <Input
+              id="upload-path"
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              placeholder={t("files.pathPlaceholder")}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("files.pathHelp")}
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={overwrite}
+              onChange={(event) => setOverwrite(event.target.checked)}
+              className="h-4 w-4 shrink-0 rounded border-input"
+            />
+            <span>{t("files.overwrite")}</span>
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={submitting || !file}>
+              {submitting ? t("common.loading") : t("files.upload")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

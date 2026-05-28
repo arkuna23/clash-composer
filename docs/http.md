@@ -164,6 +164,34 @@ GET /api/subscriptions/{id}.yaml?token=<token>
 curl 'http://127.0.0.1:8080/api/subscriptions/demo.yaml?token=secret'
 ```
 
+## 上传 config-dir 文件
+
+该接口用于把模板或代理来源 YAML 文件保存到 `config-dir` 内。
+
+```http
+POST /api/files?path=templates/base.yaml&overwrite=false
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+表单字段：
+
+- `file`: 要上传的 YAML 文件。
+
+响应：
+
+```json
+{
+  "path": "templates/base.yaml",
+  "size": 1234
+}
+```
+
+- `path` 必填，必须是相对路径，且必须解析到 `config-dir` 内。
+- 只允许 `.yaml` / `.yml` 文件。
+- 子目录会自动创建。
+- `overwrite` 默认为 `false`；目标文件已存在且未启用覆盖时返回 `409 Conflict`。
+
 ## 模板 rule-providers CRUD
 
 这些接口操作配置 `{id}` 引用的模板 YAML 中的 `rule-providers` 字段。

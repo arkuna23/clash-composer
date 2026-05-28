@@ -136,6 +136,11 @@ func (api *httpAPI) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if parts[0] == "files" {
+		api.handleFiles(w, r, parts[1:])
+		return
+	}
+
 	writeAPIError(w, notFound("not found"))
 }
 
@@ -301,6 +306,114 @@ func (api *httpAPI) handleConfig(w http.ResponseWriter, r *http.Request, id stri
 	default:
 		writeAPIError(w, methodNotAllowed("method not allowed"))
 	}
+}
+
+type uploadFileResponse struct {
+	Path string `json:"path"`
+	Size int    `json:"size"`
+}
+
+func (api *httpAPI) handleFiles(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) != 0 {
+		writeAPIError(w, notFound("not found"))
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeAPIError(w, methodNotAllowed("method not allowed"))
+		return
+	}
+
+	targetPath, relativePath, err := api.resolveUploadPath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeAPIError(w, badRequest(err.Error()))
+		return
+	}
+
+	overwrite, err := parseBoolQuery(r.URL.Query().Get("overwrite"))
+	if err != nil {
+		writeAPIError(w, badRequest(err.Error()))
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, badRequest("file is required"))
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeAPIError(w, internalError("read uploaded file", err))
+		return
+	}
+	if len(data) == 0 {
+		writeAPIError(w, badRequest("file must not be empty"))
+		return
+	}
+
+	if err := ensureUploadParentDir(api.configDir, filepath.Dir(targetPath)); err != nil {
+		writeAPIError(w, badRequest(err.Error()))
+		return
+	}
+	if err := api.ensureUploadTarget(targetPath, overwrite); err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	if err := writeFileAtomic(targetPath, data, 0600); err != nil {
+		writeAPIError(w, internalError("write uploaded file", err))
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, uploadFileResponse{
+		Path: relativePath,
+		Size: len(data),
+	})
+}
+
+func (api *httpAPI) resolveUploadPath(raw string) (string, string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(raw) {
+		return "", "", fmt.Errorf("path must be relative")
+	}
+
+	cleaned := filepath.Clean(raw)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("path escapes config dir")
+	}
+	ext := strings.ToLower(filepath.Ext(cleaned))
+	if ext != ".yaml" && ext != ".yml" {
+		return "", "", fmt.Errorf("file extension must be .yaml or .yml")
+	}
+
+	targetPath := filepath.Join(api.configDir, cleaned)
+	if err := ensurePathInside(api.configDir, targetPath); err != nil {
+		return "", "", err
+	}
+	return targetPath, filepath.ToSlash(cleaned), nil
+}
+
+func (api *httpAPI) ensureUploadTarget(path string, overwrite bool) *apiError {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return internalError("stat uploaded file", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return badRequest("refusing symlink target")
+	}
+	if !info.Mode().IsRegular() {
+		return badRequest("target is not a regular file")
+	}
+	if !overwrite {
+		return conflict("file already exists")
+	}
+	return nil
 }
 
 func (api *httpAPI) handleSubscription(w http.ResponseWriter, r *http.Request, parts []string) {
@@ -696,6 +809,17 @@ func validateRuleString(rule string) error {
 	return nil
 }
 
+func parseBoolQuery(raw string) (bool, error) {
+	if raw == "" {
+		return false, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid boolean value")
+	}
+	return value, nil
+}
+
 func parseIndex(raw string) (int, *apiError) {
 	index, err := strconv.Atoi(raw)
 	if err != nil || index < 0 {
@@ -721,6 +845,44 @@ func ensurePathInside(root, path string) error {
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fmt.Errorf("path escapes config dir")
+	}
+	return nil
+}
+
+func ensureUploadParentDir(root, dir string) error {
+	if err := ensurePathInside(root, dir); err != nil {
+		return err
+	}
+	if dir == root {
+		return nil
+	}
+
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	current := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if err := os.Mkdir(current, 0700); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing symlink directory: %s", current)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("not a directory: %s", current)
+		}
 	}
 	return nil
 }

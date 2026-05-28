@@ -48,8 +48,10 @@ export async function apiRequest<T = unknown>(
   options: ApiRequestOptions = {},
 ): Promise<T> {
   const { method = "GET", body, signal, raw = false, auth = true } = options;
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
   const headers: Record<string, string> = {};
-  if (body !== undefined) {
+  if (body !== undefined && !isFormData) {
     headers["Content-Type"] = "application/json";
   }
   if (auth) {
@@ -62,7 +64,12 @@ export async function apiRequest<T = unknown>(
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormData
+          ? body
+          : JSON.stringify(body),
     signal,
   });
 

@@ -52,6 +52,17 @@
     "deleteSuccess": "配置 {{id}} 已删除。",
     "openDetail": "打开"
   },
+  "files": {
+    "upload": "上传文件",
+    "uploadTitle": "上传 YAML 文件",
+    "uploadDescription": "保存模板或代理来源文件到 config-dir 下。",
+    "fileLabel": "YAML 文件",
+    "pathLabel": "保存路径",
+    "pathPlaceholder": "例如 templates/base.yaml",
+    "pathHelp": "使用相对 .yaml 或 .yml 路径。子目录会自动创建。",
+    "overwrite": "覆盖已有文件",
+    "uploadSuccess": "已上传 {{path}}。"
+  },
   "detail": {
     "tabOverview": "概览",
     "tabSources": "代理来源",
