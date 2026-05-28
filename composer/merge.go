@@ -62,6 +62,46 @@ func mergeProxies(template *config.RawConfig, configs []*config.RawConfig) {
 	log.Printf("merge proxies complete: total=%d", len(template.Proxy))
 }
 
+func dedupeConfigurationProxies(configurations map[string][]*config.RawConfig) (map[string][]*config.RawConfig, error) {
+	seen := map[string]bool{}
+	deduped := make(map[string][]*config.RawConfig, len(configurations))
+
+	for groupName, configs := range configurations {
+		deduped[groupName] = make([]*config.RawConfig, 0, len(configs))
+		for _, cfg := range configs {
+			next := *cfg
+			next.Proxy = make([]map[string]any, 0, len(cfg.Proxy))
+			for _, proxy := range cfg.Proxy {
+				name, err := proxyName(proxy)
+				if err != nil {
+					return nil, err
+				}
+				if seen[name] {
+					log.Printf("skip duplicate proxy: group=%q name=%q", groupName, name)
+					continue
+				}
+				seen[name] = true
+				next.Proxy = append(next.Proxy, proxy)
+			}
+			deduped[groupName] = append(deduped[groupName], &next)
+		}
+	}
+
+	return deduped, nil
+}
+
+func proxyName(proxy map[string]any) (string, error) {
+	value, ok := proxy["name"]
+	if !ok {
+		return "", fmt.Errorf("missing name in proxy:\n%v", proxy)
+	}
+	name, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("invalid proxy name %v in proxy:\n%v", value, proxy)
+	}
+	return name, nil
+}
+
 func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup, configs []*config.RawConfig) error {
 	log.Printf("append proxy group start: group=%q sources=%d", name, len(configs))
 	length := 0
@@ -72,11 +112,11 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 	proxies := make([]string, 0, length)
 	for _, cfg := range configs {
 		for _, proxy := range cfg.Proxy {
-			if proxy["name"] != nil {
-				proxies = append(proxies, proxy["name"].(string))
-			} else {
-				return fmt.Errorf("missing name in proxy:\n%v", proxy)
+			name, err := proxyName(proxy)
+			if err != nil {
+				return err
 			}
+			proxies = append(proxies, name)
 		}
 	}
 	template.ProxyGroup = append(template.ProxyGroup, map[string]any{
@@ -168,6 +208,11 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 	configurations, err := loadConfigurations(rule.Configurations, options)
 	if err != nil {
 		log.Printf("load configurations failed: err=%v", err)
+		return nil, err
+	}
+	configurations, err = dedupeConfigurationProxies(configurations)
+	if err != nil {
+		log.Printf("dedupe configuration proxies failed: err=%v", err)
 		return nil, err
 	}
 

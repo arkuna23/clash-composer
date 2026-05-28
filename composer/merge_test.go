@@ -537,6 +537,179 @@ proxies:
 	}
 }
 
+func TestMergeDedupesProxiesByNameWithinGroup(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("proxy-groups: []\nrules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	firstFile := filepath.Join(dir, "first.yaml")
+	if err := os.WriteFile(firstFile, []byte(`
+proxies:
+  - name: Duplicate
+    type: ss
+    server: first.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: change-me
+  - name: Unique
+    type: socks5
+    server: unique.example.com
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write first fixture: %v", err)
+	}
+
+	secondFile := filepath.Join(dir, "second.yaml")
+	if err := os.WriteFile(secondFile, []byte(`
+proxies:
+  - name: Duplicate
+    type: trojan
+    server: second.example.com
+    port: 443
+    password: change-me
+`), 0644); err != nil {
+		t.Fatalf("write second fixture: %v", err)
+	}
+
+	cfg, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: map[string]ConfigGroup{
+			"Auto": {
+				Sources: []ConfigSource{{Path: firstFile}, {Path: secondFile}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("merge dedupe: %v", err)
+	}
+
+	if got, want := len(cfg.Proxy), 2; got != want {
+		t.Fatalf("len(Proxy) = %d, want %d: %#v", got, want, cfg.Proxy)
+	}
+	if cfg.Proxy[0]["name"] != "Duplicate" || cfg.Proxy[0]["server"] != "first.example.com" {
+		t.Fatalf("first duplicate was not retained: %#v", cfg.Proxy[0])
+	}
+
+	for _, groupName := range []string{"Auto-UrlTest", "Auto"} {
+		proxies := proxyGroupNames(t, cfg, groupName)
+		if strings.Count(strings.Join(proxies, ","), "Duplicate") != 1 {
+			t.Fatalf("group %s proxies = %#v, want one Duplicate", groupName, proxies)
+		}
+	}
+}
+
+func TestMergeDedupesProxiesByNameAcrossGroups(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("proxy-groups: []\nrules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	leftFile := filepath.Join(dir, "left.yaml")
+	if err := os.WriteFile(leftFile, []byte(`
+proxies:
+  - name: Shared
+    type: socks5
+    server: left.example.com
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write left fixture: %v", err)
+	}
+
+	rightFile := filepath.Join(dir, "right.yaml")
+	if err := os.WriteFile(rightFile, []byte(`
+proxies:
+  - name: Shared
+    type: socks5
+    server: right.example.com
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write right fixture: %v", err)
+	}
+
+	cfg, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: map[string]ConfigGroup{
+			"Left":  {Sources: []ConfigSource{{Path: leftFile}}},
+			"Right": {Sources: []ConfigSource{{Path: rightFile}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("merge dedupe across groups: %v", err)
+	}
+
+	if got := proxyNameCount(cfg.Proxy, "Shared"); got != 1 {
+		t.Fatalf("Shared proxy count = %d, want 1: %#v", got, cfg.Proxy)
+	}
+	references := 0
+	for _, groupName := range []string{"Left-UrlTest", "Left", "Right-UrlTest", "Right"} {
+		references += proxyNameCountInList(proxyGroupNames(t, cfg, groupName), "Shared")
+	}
+	if references != 2 {
+		t.Fatalf("Shared proxy group references = %d, want 2", references)
+	}
+}
+
+func TestMergeRejectsInvalidProxyNames(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("proxy-groups: []\nrules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	testCases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "missing",
+			body: `
+proxies:
+  - type: socks5
+    server: missing.example.com
+    port: 1080
+`,
+			want: "missing name",
+		},
+		{
+			name: "non-string",
+			body: `
+proxies:
+  - name: 123
+    type: socks5
+    server: invalid.example.com
+    port: 1080
+`,
+			want: "invalid proxy name",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			proxyFile := filepath.Join(dir, tc.name+".yaml")
+			if err := os.WriteFile(proxyFile, []byte(tc.body), 0644); err != nil {
+				t.Fatalf("write proxy fixture: %v", err)
+			}
+
+			_, err := Merge(MergeRule{
+				Template: templateFile,
+				Configurations: map[string]ConfigGroup{
+					"Auto": {Sources: []ConfigSource{{Path: proxyFile}}},
+				},
+			})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigGroupUnmarshalLegacyArray(t *testing.T) {
 	var rule MergeRule
 	if err := json.Unmarshal([]byte(`{
@@ -665,6 +838,43 @@ func TestMergeRejectsInvalidGroupIncludes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func proxyGroupNames(t *testing.T, cfg *config.RawConfig, groupName string) []string {
+	t.Helper()
+
+	for _, group := range cfg.ProxyGroup {
+		if group["name"] != groupName {
+			continue
+		}
+		proxies, ok := group["proxies"].([]string)
+		if !ok {
+			t.Fatalf("proxy group %q proxies type = %T", groupName, group["proxies"])
+		}
+		return proxies
+	}
+	t.Fatalf("missing proxy group %q in %#v", groupName, cfg.ProxyGroup)
+	return nil
+}
+
+func proxyNameCount(proxies []map[string]any, name string) int {
+	count := 0
+	for _, proxy := range proxies {
+		if proxy["name"] == name {
+			count++
+		}
+	}
+	return count
+}
+
+func proxyNameCountInList(proxies []string, name string) int {
+	count := 0
+	for _, proxy := range proxies {
+		if proxy == name {
+			count++
+		}
+	}
+	return count
 }
 
 func restoreHTTPClient(t *testing.T, client *http.Client) {
