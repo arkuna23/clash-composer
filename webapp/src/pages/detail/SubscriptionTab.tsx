@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { buildSubscriptionURL } from "@/api/client";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useAuthToken } from "@/hooks/useAuthToken";
 
 interface SubscriptionTabProps {
@@ -19,7 +20,7 @@ export function SubscriptionTab({ id }: SubscriptionTabProps) {
   const onCopy = async () => {
     if (!url) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await copyToClipboard(url);
       toast.success(t("common.copied"));
     } catch (error) {
       toast.error((error as Error).message);
