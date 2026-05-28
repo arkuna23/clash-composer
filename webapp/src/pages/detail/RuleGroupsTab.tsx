@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CollapsiblePane } from "@/components/ui/collapsible-pane";
 import {
   Dialog,
   DialogContent,
@@ -118,7 +120,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
             return (
               <div
                 key={group.name}
-                className="rounded-md border bg-card"
+                className="rounded-md border bg-card transition-colors hover:border-foreground/20"
               >
                 <div className="flex items-center gap-2 px-3 py-2">
                   <button
@@ -126,11 +128,13 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                     onClick={() => toggle(group.name)}
                     className="flex items-center gap-2 text-sm font-medium hover:text-foreground/80 cursor-pointer"
                   >
-                    {isOpen ? (
-                      <ChevronDown className="h-4 w-4" aria-hidden />
-                    ) : (
-                      <ChevronRight className="h-4 w-4" aria-hidden />
-                    )}
+                    <ChevronRight
+                      className={cn(
+                        "h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none",
+                        isOpen && "rotate-90",
+                      )}
+                      aria-hidden
+                    />
                     <span>{group.name}</span>
                     {isDefault && (
                       <Badge variant="secondary" className="text-[10px]">
@@ -171,7 +175,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                     </Button>
                   </div>
                 </div>
-                {isOpen && (
+                <CollapsiblePane open={isOpen}>
                   <div className="border-t px-3 py-2 space-y-1">
                     {group.rules.length === 0 ? (
                       <p className="text-xs text-muted-foreground">
@@ -181,7 +185,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                       group.rules.map((rule, index) => (
                         <div
                           key={`${group.name}-${index}`}
-                          className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                          className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50"
                         >
                           <span className="text-xs text-muted-foreground w-8 shrink-0 font-mono">
                             {index}
@@ -215,7 +219,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                       ))
                     )}
                   </div>
-                )}
+                </CollapsiblePane>
               </div>
             );
           })}

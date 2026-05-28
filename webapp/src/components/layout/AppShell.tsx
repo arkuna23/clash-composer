@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PageTransition } from "@/components/layout/PageTransition";
 import { useAuthToken } from "@/hooks/useAuthToken";
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/i18n";
 
@@ -85,7 +86,9 @@ export function AppShell() {
         </div>
       </header>
       <main className="container flex-1 py-6">
-        <Outlet />
+        <PageTransition>
+          <Outlet />
+        </PageTransition>
       </main>
       <footer className="border-t py-3 text-center text-xs text-muted-foreground">
         <span>Clash Composer · webapp</span>

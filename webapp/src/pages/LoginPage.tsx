@@ -91,7 +91,7 @@ export function LoginPage() {
         </DropdownMenu>
       </div>
       <div className="flex-1 flex items-center justify-center px-4 pb-24">
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-md animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-500 ease-out">
           <CardHeader>
             <CardTitle>{t("login.title")}</CardTitle>
             <CardDescription>{t("login.description")}</CardDescription>
