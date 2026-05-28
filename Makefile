@@ -7,7 +7,7 @@ DEV_CONFIG_DIR ?= configs
 DEV_TOKEN ?= dev
 DEV_ADDR ?= 127.0.0.1:8080
 
-.PHONY: build build-slim webapp go-build go-build-slim dev clean distclean
+.PHONY: build build-slim webapp go-build go-build-slim dev deploy clean distclean
 
 # Default build: build the webapp and embed it into the Go binary.
 build: webapp go-build
@@ -39,6 +39,9 @@ dev: go-build
 		exit 1; \
 	fi; \
 	cd $(WEBAPP_DIR) && pnpm install --frozen-lockfile && pnpm run dev
+
+deploy:
+	./scripts/deploy.sh
 
 $(BUILD_DIR)/:
 	mkdir -p $@

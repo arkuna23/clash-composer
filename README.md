@@ -31,6 +31,18 @@ make clean        # 仅清理 build/
 make distclean    # 同时清理 webapp/node_modules 和 webapp/dist 内容
 ```
 
+## 部署
+
+部署脚本会读取仓库根目录的 `.env`，交叉编译目标机器二进制，上传到远端并重启用户级 systemd 服务。`.env` 包含远程机器密码，已被 `.gitignore` 忽略；仓库只提交 `.env.example`。
+
+```bash
+cp .env.example .env
+$EDITOR .env
+make deploy
+```
+
+脚本依赖 `sshpass`、`ssh`、`scp` 和 `make`。当前默认示例面向 `linux/arm64`，可在 `.env` 中调整 `DEPLOY_GOOS`、`DEPLOY_GOARCH` 和安装路径。
+
 ## 使用
 
 ### 0. 查看版本
