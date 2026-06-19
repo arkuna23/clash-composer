@@ -17,6 +17,7 @@ export interface MergeRule {
   template: string;
   configurations: Record<string, ConfigGroup | ConfigSource[]>;
   rulesetStrategy?: RulesetStrategy;
+  cacheDurationSeconds?: number;
 }
 
 export interface ConfigListResponse {

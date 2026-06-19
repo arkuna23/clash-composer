@@ -47,6 +47,8 @@
     "templatePlaceholder": "例如 template.yaml",
     "rulesetStrategyLabel": "Ruleset 策略",
     "rulesetStrategyHelp": "留空使用默认。",
+    "cacheDurationLabel": "订阅缓存时长（秒）",
+    "cacheDurationHelp": "0 表示不缓存；未过期时订阅会直接返回上次生成的 YAML。",
     "createSuccess": "配置 {{id}} 已创建。",
     "deleteConfirm": "删除配置 \"{{id}}\"？",
     "deleteSuccess": "配置 {{id}} 已删除。",

@@ -47,6 +47,8 @@
     "templatePlaceholder": "e.g. template.yaml",
     "rulesetStrategyLabel": "Ruleset strategy",
     "rulesetStrategyHelp": "Leave empty for default.",
+    "cacheDurationLabel": "Subscription cache duration (seconds)",
+    "cacheDurationHelp": "0 disables caching; unexpired subscriptions return the previous YAML.",
     "createSuccess": "Configuration {{id}} created.",
     "deleteConfirm": "Delete configuration \"{{id}}\"?",
     "deleteSuccess": "Configuration {{id}} deleted.",

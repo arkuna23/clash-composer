@@ -55,13 +55,13 @@ func (api *httpAPI) handleRuleProviders(w http.ResponseWriter, r *http.Request, 
 			writeAPIError(w, badRequest(err.Error()))
 			return
 		}
-		api.handleRuleProvider(w, r, path, name)
+		api.handleRuleProvider(w, r, id, path, name)
 	default:
 		writeAPIError(w, notFound("not found"))
 	}
 }
 
-func (api *httpAPI) handleRuleProvider(w http.ResponseWriter, r *http.Request, path, name string) {
+func (api *httpAPI) handleRuleProvider(w http.ResponseWriter, r *http.Request, id, path, name string) {
 	switch r.Method {
 	case http.MethodGet:
 		provider, apiErr := getRuleProvider(path, name)
@@ -80,6 +80,7 @@ func (api *httpAPI) handleRuleProvider(w http.ResponseWriter, r *http.Request, p
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusCreated, provider)
 	case http.MethodPut:
 		provider, err := decodeProviderBody(r)
@@ -91,12 +92,14 @@ func (api *httpAPI) handleRuleProvider(w http.ResponseWriter, r *http.Request, p
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusOK, provider)
 	case http.MethodDelete:
 		if apiErr := deleteRuleProvider(path, name); apiErr != nil {
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeAPIError(w, methodNotAllowed("method not allowed"))
@@ -120,7 +123,7 @@ func (api *httpAPI) handleRuleGroups(w http.ResponseWriter, r *http.Request, id 
 			}
 			writeJSON(w, http.StatusOK, groups)
 		case http.MethodPost:
-			api.handleCreateRuleGroup(w, r, path)
+			api.handleCreateRuleGroup(w, r, id, path)
 		default:
 			writeAPIError(w, methodNotAllowed("method not allowed"))
 		}
@@ -134,19 +137,19 @@ func (api *httpAPI) handleRuleGroups(w http.ResponseWriter, r *http.Request, id 
 	}
 
 	if len(rest) == 1 {
-		api.handleRuleGroup(w, r, path, name)
+		api.handleRuleGroup(w, r, id, path, name)
 		return
 	}
 
 	if len(rest) >= 2 && rest[1] == "rules" {
-		api.handleRuleGroupRules(w, r, path, name, rest[2:])
+		api.handleRuleGroupRules(w, r, id, path, name, rest[2:])
 		return
 	}
 
 	writeAPIError(w, notFound("not found"))
 }
 
-func (api *httpAPI) handleCreateRuleGroup(w http.ResponseWriter, r *http.Request, path string) {
+func (api *httpAPI) handleCreateRuleGroup(w http.ResponseWriter, r *http.Request, id, path string) {
 	var req createRuleGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeAPIError(w, badRequest(err.Error()))
@@ -174,10 +177,11 @@ func (api *httpAPI) handleCreateRuleGroup(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, apiErr)
 		return
 	}
+	api.deleteSubscriptionCache(id)
 	writeJSON(w, http.StatusCreated, group)
 }
 
-func (api *httpAPI) handleRuleGroup(w http.ResponseWriter, r *http.Request, path, name string) {
+func (api *httpAPI) handleRuleGroup(w http.ResponseWriter, r *http.Request, id, path, name string) {
 	switch r.Method {
 	case http.MethodGet:
 		group, apiErr := getRuleGroup(path, name)
@@ -185,6 +189,7 @@ func (api *httpAPI) handleRuleGroup(w http.ResponseWriter, r *http.Request, path
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusOK, group)
 	case http.MethodPut:
 		var req updateRuleGroupRequest
@@ -203,13 +208,14 @@ func (api *httpAPI) handleRuleGroup(w http.ResponseWriter, r *http.Request, path
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeAPIError(w, methodNotAllowed("method not allowed"))
 	}
 }
 
-func (api *httpAPI) handleRuleGroupRules(w http.ResponseWriter, r *http.Request, path, name string, rest []string) {
+func (api *httpAPI) handleRuleGroupRules(w http.ResponseWriter, r *http.Request, id, path, name string, rest []string) {
 	switch len(rest) {
 	case 0:
 		if r.Method != http.MethodPost {
@@ -230,6 +236,7 @@ func (api *httpAPI) handleRuleGroupRules(w http.ResponseWriter, r *http.Request,
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusCreated, group)
 	case 1:
 		index, err := parseIndex(rest[0])
@@ -237,13 +244,13 @@ func (api *httpAPI) handleRuleGroupRules(w http.ResponseWriter, r *http.Request,
 			writeAPIError(w, err)
 			return
 		}
-		api.handleRuleGroupRule(w, r, path, name, index)
+		api.handleRuleGroupRule(w, r, id, path, name, index)
 	default:
 		writeAPIError(w, notFound("not found"))
 	}
 }
 
-func (api *httpAPI) handleRuleGroupRule(w http.ResponseWriter, r *http.Request, path, name string, index int) {
+func (api *httpAPI) handleRuleGroupRule(w http.ResponseWriter, r *http.Request, id, path, name string, index int) {
 	switch r.Method {
 	case http.MethodGet:
 		rule, apiErr := getRuleFromGroup(path, name, index)
@@ -267,6 +274,7 @@ func (api *httpAPI) handleRuleGroupRule(w http.ResponseWriter, r *http.Request, 
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusOK, group)
 	case http.MethodDelete:
 		group, apiErr := deleteRuleFromGroup(path, name, index)
@@ -274,6 +282,7 @@ func (api *httpAPI) handleRuleGroupRule(w http.ResponseWriter, r *http.Request, 
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusOK, group)
 	default:
 		writeAPIError(w, methodNotAllowed("method not allowed"))

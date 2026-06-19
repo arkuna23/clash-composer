@@ -109,6 +109,7 @@ Content-Type: application/json
       "includeDirect": true
     }
   },
+  "cacheDurationSeconds": 0,
   "rulesetStrategy": "url-ruleset"
 }
 ```
@@ -155,7 +156,10 @@ GET /api/subscriptions/{id}.yaml?token=<token>
 
 - `{id}` 对应 `config-dir` 下的 `<id>.json`。
 - 服务会读取 merge rule，合并模板和配置源，并返回 YAML。
+- 当 merge rule 的 `cacheDurationSeconds` 大于 `0` 时，服务会把生成后的 YAML 缓存在 `config-dir/.cache/subscriptions/`，未过期请求会直接返回缓存。
+- `cacheDurationSeconds` 为 `0` 或缺省时不缓存。
 - 响应 `Content-Type` 为 `application/yaml; charset=utf-8`。
+- 响应头 `X-Clash-Composer-Cache` 表示缓存状态：`hit`、`miss` 或 `disabled`。
 - 该接口不使用 Bearer token，只校验 query string 中的 `token`。
 
 示例：

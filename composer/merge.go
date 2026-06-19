@@ -20,9 +20,10 @@ const (
 )
 
 type MergeRule struct {
-	Template        string                 `json:"template"`
-	Configurations  map[string]ConfigGroup `json:"configurations"` // proxy group name: config
-	RulesetStrategy RulesetStrategy        `json:"rulesetStrategy"`
+	Template             string                 `json:"template"`
+	Configurations       map[string]ConfigGroup `json:"configurations"` // proxy group name: config
+	RulesetStrategy      RulesetStrategy        `json:"rulesetStrategy"`
+	CacheDurationSeconds int64                  `json:"cacheDurationSeconds,omitempty"`
 }
 
 type ConfigGroup struct {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 const testAPIToken = "secret-token"
@@ -81,6 +82,199 @@ proxies:
 
 	resp = performRequest(t, api, http.MethodGet, "/api/configs/demo", nil, true)
 	assertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestHTTPAPISubscriptionCache(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", `
+proxy-groups: []
+rules:
+  - MATCH,DIRECT
+`)
+	writeTestFile(t, dir, "proxy.yaml", `
+proxies:
+  - name: Cached-Proxy
+    type: socks5
+    server: first.example.com
+    port: 1080
+`)
+	writeMergeRule(t, dir, "demo", MergeRule{
+		Template:             "template.yaml",
+		CacheDurationSeconds: 3600,
+		Configurations: map[string]ConfigGroup{
+			"Auto": {Sources: []ConfigSource{{Path: "proxy.yaml"}}},
+		},
+	})
+	api := newTestAPI(t, dir)
+
+	resp := performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	if got := resp.Header().Get("X-Clash-Composer-Cache"); got != "miss" {
+		t.Fatalf("cache header = %q, want miss", got)
+	}
+	first := resp.Body.String()
+	if !strings.Contains(first, "first.example.com") {
+		t.Fatalf("first subscription body mismatch:\n%s", first)
+	}
+
+	writeTestFile(t, dir, "proxy.yaml", `
+proxies:
+  - name: Cached-Proxy
+    type: socks5
+    server: second.example.com
+    port: 1080
+`)
+	resp = performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	if got := resp.Header().Get("X-Clash-Composer-Cache"); got != "hit" {
+		t.Fatalf("cache header = %q, want hit", got)
+	}
+	if body := resp.Body.String(); body != first || strings.Contains(body, "second.example.com") {
+		t.Fatalf("expected cached body, got:\n%s", body)
+	}
+}
+
+func TestHTTPAPISubscriptionCacheExpires(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", "proxy-groups: []\nrules: []\n")
+	writeTestFile(t, dir, "proxy.yaml", `
+proxies:
+  - name: Expiring-Proxy
+    type: socks5
+    server: old.example.com
+    port: 1080
+`)
+	writeMergeRule(t, dir, "demo", MergeRule{
+		Template:             "template.yaml",
+		CacheDurationSeconds: 1,
+		Configurations: map[string]ConfigGroup{
+			"Auto": {Sources: []ConfigSource{{Path: "proxy.yaml"}}},
+		},
+	})
+	api := newTestAPI(t, dir)
+
+	resp := performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	cachePath := filepath.Join(dir, ".cache", "subscriptions", "demo.yaml")
+	expired := time.Now().Add(-2 * time.Second)
+	if err := os.Chtimes(cachePath, expired, expired); err != nil {
+		t.Fatalf("expire cache: %v", err)
+	}
+	writeTestFile(t, dir, "proxy.yaml", `
+proxies:
+  - name: Expiring-Proxy
+    type: socks5
+    server: fresh.example.com
+    port: 1080
+`)
+
+	resp = performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	if got := resp.Header().Get("X-Clash-Composer-Cache"); got != "miss" {
+		t.Fatalf("cache header = %q, want miss", got)
+	}
+	if body := resp.Body.String(); !strings.Contains(body, "fresh.example.com") {
+		t.Fatalf("expected refreshed body, got:\n%s", body)
+	}
+}
+
+func TestHTTPAPISubscriptionCacheInvalidatedOnConfigWriteAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", "proxy-groups: []\nrules: []\n")
+	writeTestFile(t, dir, "proxy.yaml", `
+proxies:
+  - name: Invalidated-Proxy
+    type: socks5
+    server: first.example.com
+    port: 1080
+`)
+	rule := MergeRule{
+		Template:             "template.yaml",
+		CacheDurationSeconds: 3600,
+		Configurations: map[string]ConfigGroup{
+			"Auto": {Sources: []ConfigSource{{Path: "proxy.yaml"}}},
+		},
+	}
+	writeMergeRule(t, dir, "demo", rule)
+	api := newTestAPI(t, dir)
+
+	resp := performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	cachePath := filepath.Join(dir, ".cache", "subscriptions", "demo.yaml")
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("stat cache: %v", err)
+	}
+
+	writeTestFile(t, dir, "proxy.yaml", `
+proxies:
+  - name: Invalidated-Proxy
+    type: socks5
+    server: second.example.com
+    port: 1080
+`)
+	resp = performJSONRequest(t, api, http.MethodPut, "/api/configs/demo", rule, true)
+	assertStatus(t, resp, http.StatusOK)
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("cache still exists after config write: %v", err)
+	}
+
+	resp = performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	if body := resp.Body.String(); !strings.Contains(body, "second.example.com") {
+		t.Fatalf("expected invalidated body, got:\n%s", body)
+	}
+
+	resp = performRequest(t, api, http.MethodDelete, "/api/configs/demo", nil, true)
+	assertStatus(t, resp, http.StatusNoContent)
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("cache still exists after config delete: %v", err)
+	}
+}
+
+func TestHTTPAPISubscriptionCacheInvalidatedOnTemplateEdit(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", `
+proxy-groups: []
+rules:
+  - MATCH,DIRECT
+`)
+	writeMergeRule(t, dir, "demo", MergeRule{
+		Template:             "template.yaml",
+		CacheDurationSeconds: 3600,
+	})
+	api := newTestAPI(t, dir)
+
+	resp := performRequest(t, api, http.MethodGet, "/api/subscriptions/demo.yaml?token="+testAPIToken, nil, false)
+	assertStatus(t, resp, http.StatusOK)
+	cachePath := filepath.Join(dir, ".cache", "subscriptions", "demo.yaml")
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("stat cache: %v", err)
+	}
+
+	resp = performJSONRequest(t, api, http.MethodPost, "/api/configs/demo/template/rule-groups", createRuleGroupRequest{
+		Name:  "custom",
+		Index: intPtr(1),
+		Rules: []string{"DOMAIN-SUFFIX,example.com,DIRECT"},
+	}, true)
+	assertStatus(t, resp, http.StatusCreated)
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("cache still exists after template edit: %v", err)
+	}
+}
+
+func TestHTTPAPIRejectsNegativeCacheDuration(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", "rules: []\n")
+	api := newTestAPI(t, dir)
+
+	resp := performJSONRequest(t, api, http.MethodPost, "/api/configs/demo", MergeRule{
+		Template:             "template.yaml",
+		CacheDurationSeconds: -1,
+	}, true)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if !strings.Contains(resp.Body.String(), "cacheDurationSeconds") {
+		t.Fatalf("unexpected response: %s", resp.Body.String())
+	}
 }
 
 func TestHTTPAPINormalizesLegacyConfigurationGroups(t *testing.T) {

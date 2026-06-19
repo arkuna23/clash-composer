@@ -21,5 +21,6 @@
       "includeDirect": true
     }
   },
+  "cacheDurationSeconds": 0,
   "rulesetStrategy": "url-ruleset"
 }

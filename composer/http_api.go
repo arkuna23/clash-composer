@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -441,6 +442,15 @@ func (api *httpAPI) handleSubscription(w http.ResponseWriter, r *http.Request, p
 		writeAPIError(w, apiErr)
 		return
 	}
+
+	if data, ok, err := api.readSubscriptionCache(id, rule.CacheDurationSeconds); err != nil {
+		writeAPIError(w, internalError("read subscription cache", err))
+		return
+	} else if ok {
+		writeSubscriptionYAML(w, data, "hit")
+		return
+	}
+
 	mergedRule, err := api.resolveMergeRule(rule)
 	if err != nil {
 		writeAPIError(w, badRequest(err.Error()))
@@ -454,12 +464,16 @@ func (api *httpAPI) handleSubscription(w http.ResponseWriter, r *http.Request, p
 		writeAPIError(w, internalError("merge config", mergeErr))
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(data); err != nil {
-		log.Printf("write subscription response failed: %v", err)
+	cacheState := "disabled"
+	if rule.CacheDurationSeconds > 0 {
+		cacheState = "miss"
+		if err := api.writeSubscriptionCache(id, data); err != nil {
+			writeAPIError(w, internalError("write subscription cache", err))
+			return
+		}
 	}
+
+	writeSubscriptionYAML(w, data, cacheState)
 }
 
 func (api *httpAPI) readMergeRule(id string) (MergeRule, *apiError) {
@@ -522,6 +536,7 @@ func (api *httpAPI) writeMergeRule(id string, rule MergeRule, create bool) *apiE
 	if err := writeFileAtomic(path, data, 0600); err != nil {
 		return internalError("write config", err)
 	}
+	api.deleteSubscriptionCache(id)
 	return nil
 }
 
@@ -539,12 +554,16 @@ func (api *httpAPI) deleteMergeRule(id string) *apiError {
 		}
 		return internalError("delete config", err)
 	}
+	api.deleteSubscriptionCache(id)
 	return nil
 }
 
 func (api *httpAPI) validateMergeRule(rule MergeRule) error {
 	if strings.TrimSpace(rule.Template) == "" {
 		return fmt.Errorf("template is required")
+	}
+	if rule.CacheDurationSeconds < 0 {
+		return fmt.Errorf("cacheDurationSeconds must not be negative")
 	}
 	if _, err := api.resolveManagedPath(rule.Template); err != nil {
 		return fmt.Errorf("template: %w", err)
@@ -625,6 +644,53 @@ func (api *httpAPI) templatePath(id string) (string, *apiError) {
 
 func (api *httpAPI) configPath(id string) string {
 	return filepath.Join(api.configDir, id+".json")
+}
+
+func (api *httpAPI) subscriptionCachePath(id string) string {
+	return filepath.Join(api.configDir, ".cache", "subscriptions", id+".yaml")
+}
+
+func (api *httpAPI) readSubscriptionCache(id string, ttlSeconds int64) ([]byte, bool, error) {
+	if ttlSeconds <= 0 {
+		return nil, false, nil
+	}
+	path := api.subscriptionCachePath(id)
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, false, fmt.Errorf("refusing symlink: %s", path)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("not a regular file: %s", path)
+	}
+	if time.Since(info.ModTime()) >= time.Duration(ttlSeconds)*time.Second {
+		return nil, false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func (api *httpAPI) writeSubscriptionCache(id string, data []byte) error {
+	path := api.subscriptionCachePath(id)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data, 0600)
+}
+
+func (api *httpAPI) deleteSubscriptionCache(id string) {
+	path := api.subscriptionCachePath(id)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("delete subscription cache failed: id=%q err=%v", id, err)
+	}
 }
 
 func (api *httpAPI) resolveManagedPath(raw string) (string, error) {
@@ -932,6 +998,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	}
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		log.Printf("write json response failed: %v", err)
+	}
+}
+
+func writeSubscriptionYAML(w http.ResponseWriter, data []byte, cacheState string) {
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.Header().Set("X-Clash-Composer-Cache", cacheState)
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(data); err != nil {
+		log.Printf("write subscription response failed: %v", err)
 	}
 }
 

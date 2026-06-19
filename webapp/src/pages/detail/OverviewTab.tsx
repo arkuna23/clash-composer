@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -33,6 +33,15 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
   const [strategy, setStrategy] = useState<RulesetStrategy>(
     rule.rulesetStrategy ?? "",
   );
+  const [cacheDurationSeconds, setCacheDurationSeconds] = useState(
+    String(rule.cacheDurationSeconds ?? 0),
+  );
+
+  useEffect(() => {
+    setTemplate(rule.template);
+    setStrategy(rule.rulesetStrategy ?? "");
+    setCacheDurationSeconds(String(rule.cacheDurationSeconds ?? 0));
+  }, [rule]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -40,6 +49,10 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
         ...rule,
         template: template.trim(),
         rulesetStrategy: strategy,
+        cacheDurationSeconds: Math.max(
+          0,
+          Math.floor(Number(cacheDurationSeconds) || 0),
+        ),
       }),
     onSuccess: (data) => {
       queryClient.setQueryData<MergeRule>(["configs", id], data);
@@ -90,6 +103,23 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
             ))}
           </SelectContent>
         </Select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="overview-cache-duration">
+          {t("configs.cacheDurationLabel")}
+        </Label>
+        <Input
+          id="overview-cache-duration"
+          type="number"
+          min={0}
+          step={1}
+          value={cacheDurationSeconds}
+          onChange={(event) => setCacheDurationSeconds(event.target.value)}
+          className="max-w-xs"
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("configs.cacheDurationHelp")}
+        </p>
       </div>
       <Button type="submit" disabled={mutation.isPending}>
         {mutation.isPending ? t("common.loading") : t("detail.saveOverview")}
