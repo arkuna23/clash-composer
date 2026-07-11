@@ -789,6 +789,58 @@ proxies:
 	}
 }
 
+func TestMergeGroupCanDisableURLTest(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte(`
+proxy-groups:
+  - name: TemplateGroup
+    type: select
+    proxies:
+      - DIRECT
+rules: []
+`), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	proxyFile := filepath.Join(dir, "proxy.yaml")
+	if err := os.WriteFile(proxyFile, []byte(`
+proxies:
+  - name: Direct-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write proxy fixture: %v", err)
+	}
+
+	disabled := false
+	cfg, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: map[string]ConfigGroup{
+			"Auto": {
+				Sources:       []ConfigSource{{Path: proxyFile}},
+				IncludeDirect: true,
+				IncludeGroups: []string{"TemplateGroup", "Other"},
+				EnableURLTest: &disabled,
+			},
+			"Other": {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("merge without url test: %v", err)
+	}
+
+	if proxyGroupExists(cfg, "Auto-UrlTest") {
+		t.Fatalf("unexpected Auto-UrlTest group: %#v", cfg.ProxyGroup)
+	}
+	got := proxyGroupNames(t, cfg, "Auto")
+	want := []string{"DIRECT", "TemplateGroup", "Other", "Direct-Proxy"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Auto proxies = %#v, want %#v", got, want)
+	}
+}
+
 func TestMergeRejectsInvalidGroupIncludes(t *testing.T) {
 	dir := t.TempDir()
 	templateFile := filepath.Join(dir, "template.yaml")
@@ -855,6 +907,15 @@ func proxyGroupNames(t *testing.T, cfg *config.RawConfig, groupName string) []st
 	}
 	t.Fatalf("missing proxy group %q in %#v", groupName, cfg.ProxyGroup)
 	return nil
+}
+
+func proxyGroupExists(cfg *config.RawConfig, groupName string) bool {
+	for _, group := range cfg.ProxyGroup {
+		if group["name"] == groupName {
+			return true
+		}
+	}
+	return false
 }
 
 func proxyNameCount(proxies []map[string]any, name string) int {

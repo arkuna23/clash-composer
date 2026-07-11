@@ -11,6 +11,7 @@ export interface ConfigGroup {
   sources?: ConfigSource[];
   includeDirect?: boolean;
   includeGroups?: string[];
+  enableUrlTest?: boolean;
 }
 
 export interface MergeRule {

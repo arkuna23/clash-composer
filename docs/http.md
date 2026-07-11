@@ -98,6 +98,7 @@ Content-Type: application/json
         }
       ],
       "includeDirect": true,
+      "enableUrlTest": true,
       "includeGroups": ["Common"]
     },
     "Common": {
@@ -116,7 +117,7 @@ Content-Type: application/json
 
 每个配置分组的 `sources` 支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
 
-`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组；`includeGroups` 可以插入其他配置分组名、模板中已有的 proxy group 名称，或内置的 `DIRECT` / `REJECT`。旧版数组结构仍可读取，API 返回时会规范化为对象结构。
+`enableUrlTest` 缺省或为 `true` 时会生成 `<分组名>-UrlTest`；设为 `false` 时只生成 `<分组名>` select，节点和插入项直接进入该 select。`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组；`includeGroups` 可以插入其他配置分组名、模板中已有的 proxy group 名称，或内置的 `DIRECT` / `REJECT`。旧版数组结构仍可读取，API 返回时会规范化为对象结构。
 
 创建成功返回 `201 Created` 和保存后的 JSON。若配置已存在，返回 `409 Conflict`。
 

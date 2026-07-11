@@ -88,7 +88,7 @@ merged.yaml
 }
 ```
 
-每个配置分组会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`includeDirect` 会把 `DIRECT` 插入到 select 分组中，`includeGroups` 可以插入其他已有分组名或其他配置分组名用于分流。
+每个配置分组默认会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`enableUrlTest` 设为 `false` 时只生成 `<分组名>` select，节点、`DIRECT` 和 `includeGroups` 会直接加入该 select。`includeDirect` 会把 `DIRECT` 插入到 select 分组中，`includeGroups` 可以插入其他已有分组名或其他配置分组名用于分流。
 
 `cacheDurationSeconds` 控制订阅缓存时长，单位秒；`0` 或缺省表示每次下载订阅时实时生成。
 

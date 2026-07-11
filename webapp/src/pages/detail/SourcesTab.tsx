@@ -27,6 +27,7 @@ interface GroupDraft {
   name: string;
   includeDirect: boolean;
   includeGroups: string;
+  enableUrlTest: boolean;
   sources: SourceDraft[];
 }
 
@@ -69,6 +70,7 @@ function ruleToDrafts(rule: MergeRule): GroupDraft[] {
       name,
       includeDirect: group.includeDirect ?? false,
       includeGroups: (group.includeGroups ?? []).join(", "),
+      enableUrlTest: group.enableUrlTest ?? true,
       sources: (group.sources ?? []).map(sourceToDraft),
     };
   });
@@ -91,6 +93,7 @@ function draftsToConfigurations(drafts: GroupDraft[]): Record<string, ConfigGrou
       sources: draft.sources.map(draftToSource),
       includeDirect: draft.includeDirect,
       includeGroups: parseIncludeGroups(draft.includeGroups),
+      enableUrlTest: draft.enableUrlTest,
     };
   }
   return result;
@@ -148,7 +151,13 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
     }
     setDrafts((prev) => [
       ...prev,
-      { name, includeDirect: false, includeGroups: "", sources: [] },
+      {
+        name,
+        includeDirect: false,
+        includeGroups: "",
+        enableUrlTest: true,
+        sources: [],
+      },
     ]);
     setNewGroupName("");
   };
@@ -197,6 +206,10 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
 
   const updateIncludeGroups = (groupIndex: number, includeGroups: string) => {
     updateGroup(groupIndex, { ...drafts[groupIndex], includeGroups });
+  };
+
+  const updateEnableUrlTest = (groupIndex: number, enableUrlTest: boolean) => {
+    updateGroup(groupIndex, { ...drafts[groupIndex], enableUrlTest });
   };
 
   const valuePlaceholder = (kind: SourceKind) => {
@@ -263,7 +276,7 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                   </Button>
                 </div>
               </div>
-              <div className="grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,12rem)_1fr] sm:items-center">
+              <div className="grid gap-3 border-t pt-3 sm:grid-cols-2 sm:items-center">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -275,7 +288,18 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                   />
                   <span>{t("sources.includeDirect")}</span>
                 </label>
-                <div className="space-y-1">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={group.enableUrlTest}
+                    onChange={(event) =>
+                      updateEnableUrlTest(groupIndex, event.target.checked)
+                    }
+                    className="h-4 w-4 shrink-0 rounded border-input"
+                  />
+                  <span>{t("sources.enableUrlTest")}</span>
+                </label>
+                <div className="space-y-1 sm:col-span-2">
                   <Label htmlFor={`include-groups-${groupIndex}`}>
                     {t("sources.includeGroups")}
                   </Label>

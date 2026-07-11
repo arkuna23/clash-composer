@@ -8,6 +8,7 @@
         }
       ],
       "includeDirect": true,
+      "enableUrlTest": true,
       "includeGroups": [
         "Common"
       ]

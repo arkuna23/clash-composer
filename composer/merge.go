@@ -30,6 +30,7 @@ type ConfigGroup struct {
 	Sources       []ConfigSource `json:"sources,omitempty"`
 	IncludeDirect bool           `json:"includeDirect,omitempty"`
 	IncludeGroups []string       `json:"includeGroups,omitempty"`
+	EnableURLTest *bool          `json:"enableUrlTest,omitempty"`
 }
 
 func (g *ConfigGroup) UnmarshalJSON(data []byte) error {
@@ -46,6 +47,10 @@ func (g *ConfigGroup) UnmarshalJSON(data []byte) error {
 	}
 	*g = ConfigGroup(next)
 	return nil
+}
+
+func (g ConfigGroup) urlTestEnabled() bool {
+	return g.EnableURLTest == nil || *g.EnableURLTest
 }
 
 // MergeOptions controls optional merge behavior that is not part of the JSON rule.
@@ -107,18 +112,24 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 			proxies = append(proxies, name)
 		}
 	}
-	template.ProxyGroup = append(template.ProxyGroup, map[string]any{
-		"name":      name + "-UrlTest",
-		"type":      "url-test",
-		"url":       "http://www.gstatic.com/generate_204",
-		"interval":  300,
-		"tolerance": 50,
-		"proxies":   proxies,
-	})
+	urlTestEnabled := group.urlTestEnabled()
+	if urlTestEnabled {
+		template.ProxyGroup = append(template.ProxyGroup, map[string]any{
+			"name":      name + "-UrlTest",
+			"type":      "url-test",
+			"url":       "http://www.gstatic.com/generate_204",
+			"interval":  300,
+			"tolerance": 50,
+			"proxies":   proxies,
+		})
+	}
 
-	proxiesSelect := make([]string, 0, len(proxies)+1)
-	proxiesSelect = append(proxiesSelect, name+"-UrlTest")
-	proxiesSelect = append(proxiesSelect, proxyGroupIncludes(group)...)
+	includes := proxyGroupIncludes(group)
+	proxiesSelect := make([]string, 0, len(proxies)+len(includes)+1)
+	if urlTestEnabled {
+		proxiesSelect = append(proxiesSelect, name+"-UrlTest")
+	}
+	proxiesSelect = append(proxiesSelect, includes...)
 	proxiesSelect = append(proxiesSelect, proxies...)
 	template.ProxyGroup = append(template.ProxyGroup, map[string]any{
 		"name":    name,
@@ -126,7 +137,7 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 		"proxies": proxiesSelect,
 	})
 
-	log.Printf("append proxy group complete: group=%q proxies=%d", name, len(proxiesSelect))
+	log.Printf("append proxy group complete: group=%q url_test=%t proxies=%d", name, urlTestEnabled, len(proxiesSelect))
 	return nil
 }
 
