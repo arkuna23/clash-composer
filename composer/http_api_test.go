@@ -560,9 +560,8 @@ rules:
 	api := newTestAPI(t, dir)
 
 	resp := performJSONRequest(t, api, http.MethodPost, "/api/configs/demo/template/rule-groups/Target/rules", addRulesRequest{
-		RulesYAML: `rules:
-  - DOMAIN-SUFFIX,one.example,Target
-  - DOMAIN-SUFFIX,two.example,Target
+		RulesYAML: `- DOMAIN-SUFFIX,one.example,Target
+- DOMAIN-SUFFIX,two.example,Target
 `,
 		Index: intPtr(1),
 	}, true)
@@ -647,16 +646,6 @@ func TestParseRuleList(t *testing.T) {
 			want: []string{"DOMAIN-SUFFIX,one.example,DIRECT", "DOMAIN-SUFFIX,two.example,DIRECT"},
 		},
 		{
-			name: "subscription mapping",
-			input: `
-mixed-port: 7890
-rules:
-  - DOMAIN,one.example,DIRECT
-  - MATCH,REJECT
-`,
-			want: []string{"DOMAIN,one.example,DIRECT", "MATCH,REJECT"},
-		},
-		{
 			name:  "plain lines",
 			input: "DOMAIN,one.example,DIRECT\nMATCH,REJECT",
 			want:  []string{"DOMAIN,one.example,DIRECT", "MATCH,REJECT"},
@@ -679,6 +668,8 @@ rules:
 		"rules: [",
 		"[]",
 		"rules: []",
+		"rules:\n  - DOMAIN,one.example,DIRECT",
+		"mixed-port: 7890\nrules:\n  - MATCH,REJECT",
 	}
 	for _, input := range invalidCases {
 		if _, err := parseRuleList(input); err == nil {

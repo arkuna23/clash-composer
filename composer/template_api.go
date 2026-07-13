@@ -697,10 +697,7 @@ func parseRuleList(input string) ([]string, error) {
 	if yamlErr == nil && len(doc.Content) > 0 {
 		root := doc.Content[0]
 		if root.Kind == yaml.MappingNode {
-			root = mappingValue(root, "rules")
-			if root == nil {
-				return nil, fmt.Errorf("YAML mapping must contain rules")
-			}
+			return nil, fmt.Errorf("rules YAML must be a top-level list")
 		}
 		if root.Kind == yaml.SequenceNode {
 			if len(root.Content) == 0 {

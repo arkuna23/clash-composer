@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Globe, LogOut } from "lucide-react";
+import { Globe, List, LogOut } from "lucide-react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,8 +58,20 @@ export function AppShell() {
           </Link>
           <div className="flex items-center gap-2">
             {showHome && (
-              <Button variant="ghost" size="sm" asChild>
-                <Link to="/configs">{t("configs.title")}</Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 px-2 sm:px-3"
+                asChild
+              >
+                <Link
+                  to="/configs"
+                  aria-label={t("configs.title")}
+                  title={t("configs.title")}
+                >
+                  <List className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">{t("configs.title")}</span>
+                </Link>
               </Button>
             )}
             <DropdownMenu>

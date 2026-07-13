@@ -77,6 +77,15 @@ export function ConfigDetailPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [hasUnsavedChanges]);
 
+  useEffect(() => {
+    if (!searchParams.has("expanded")) return;
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete("expanded");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const setOverviewDirty = useCallback((dirty: boolean) => {
     setDirtyTabs((previous) =>
       previous.overview === dirty ? previous : { ...previous, overview: dirty },

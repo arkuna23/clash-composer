@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -100,8 +99,10 @@ interface RuleGroupsTabProps {
 export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
   const listKey = ["configs", id, "rule-groups"];
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroup, setRenameGroup] = useState<string | null>(null);
   const [addRuleGroup, setAddRuleGroup] = useState<RuleGroup | null>(null);
@@ -155,22 +156,22 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
   };
 
   const toggle = (name: string) => {
-    setSearchParams((previous) => {
-      const next = new URLSearchParams(previous);
-      const expanded = new Set(next.getAll("expanded"));
-      if (expanded.has(name)) {
-        expanded.delete(name);
+    setExpandedGroups((previous) => {
+      const next = new Set(previous);
+      if (next.has(name)) {
+        next.delete(name);
       } else {
-        expanded.add(name);
+        next.add(name);
       }
-      next.delete("expanded");
-      for (const groupName of expanded) next.append("expanded", groupName);
       return next;
-    }, { replace: true });
+    });
   };
 
+  useEffect(() => {
+    setExpandedGroups(new Set());
+  }, [id]);
+
   const groups = groupsQuery.data ?? [];
-  const expanded = new Set(searchParams.getAll("expanded"));
   const numberFormatter = new Intl.NumberFormat(i18n.resolvedLanguage);
 
   return (
@@ -202,7 +203,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
       ) : (
         <div className="space-y-3">
           {groups.map((group, groupIndex) => {
-            const isOpen = expanded.has(group.name);
+            const isOpen = expandedGroups.has(group.name);
             const isDefault = group.name === DEFAULT_GROUP;
             const contentID = `rule-group-${groupIndex}-rules`;
             return (
@@ -728,7 +729,7 @@ function RuleBatchFields({
           onChange={(event) => onChange({ ...draft, yaml: event.target.value })}
           rows={8}
           className="font-mono text-xs"
-          placeholder={"rules:\n  - DOMAIN-SUFFIX,example.com,DIRECT\n  - …"}
+          placeholder={"- DOMAIN-SUFFIX,example.com,DIRECT\n- IP-CIDR,192.0.2.0/24,DIRECT"}
           autoComplete="off"
           spellCheck={false}
           required={draft.mode === "yaml"}

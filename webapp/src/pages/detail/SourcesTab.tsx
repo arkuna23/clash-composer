@@ -114,7 +114,9 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<GroupDraft[]>(() => ruleToDrafts(rule));
   const [newGroupName, setNewGroupName] = useState("");
-  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [error, setError] = useState("");
   const isDirty =
     JSON.stringify(draftsToConfigurations(drafts)) !==
@@ -133,7 +135,7 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
 
   useEffect(() => {
     setDrafts(ruleToDrafts(rule));
-    setExpandedSources({});
+    setExpandedGroups(new Set());
   }, [rule]);
 
   const mutation = useMutation({
@@ -177,10 +179,11 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
       return;
     }
     setError("");
+    const key = nextDraftKey();
     setDrafts((previous) => [
       ...previous,
       {
-        key: nextDraftKey(),
+        key,
         name,
         includeDirect: false,
         includeGroups: "",
@@ -188,6 +191,7 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
         sources: [],
       },
     ]);
+    setExpandedGroups((previous) => new Set(previous).add(key));
     setNewGroupName("");
   };
 
@@ -195,7 +199,18 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
     const group = drafts[groupIndex];
     const source = { key: nextDraftKey(), kind: "path" as const, value: "" };
     updateGroup(groupIndex, { ...group, sources: [...group.sources, source] });
-    setExpandedSources((previous) => ({ ...previous, [source.key]: true }));
+  };
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const updateSource = (groupIndex: number, sourceIndex: number, next: SourceDraft) => {
@@ -213,17 +228,6 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
     const sources = [...group.sources];
     [sources[sourceIndex], sources[target]] = [sources[target], sources[sourceIndex]];
     updateGroup(groupIndex, { ...group, sources });
-  };
-
-  const sourceKindLabel = (kind: SourceKind) => {
-    switch (kind) {
-      case "path":
-        return t("sources.kindPath");
-      case "url":
-        return t("sources.kindUrl");
-      case "cmd":
-        return t("sources.kindCmd");
-    }
   };
 
   const sourcePlaceholder = (kind: SourceKind) => {
@@ -274,254 +278,310 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
       </div>
       <FormError id="sources-error" message={error} />
 
-      {drafts.map((group, groupIndex) => (
-        <section key={group.key} className="border-b pb-5 last:border-b-0">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Input
-              name={`configurations.${groupIndex}.name`}
-              value={group.name}
-              onChange={(event) =>
-                updateGroup(groupIndex, { ...group, name: event.target.value })
-              }
-              aria-label={t("sources.groupName")}
-              autoComplete="off"
-              spellCheck={false}
-              className="font-medium sm:max-w-xs"
-              required
-            />
-            <div className="flex items-center gap-1 sm:ml-auto">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                title={t("sources.moveUp")}
-                aria-label={t("sources.moveUp")}
-                onClick={() => moveGroup(groupIndex, -1)}
-                disabled={groupIndex === 0}
-              >
-                <ArrowUp className="h-4 w-4" aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                title={t("sources.moveDown")}
-                aria-label={t("sources.moveDown")}
-                onClick={() => moveGroup(groupIndex, 1)}
-                disabled={groupIndex === drafts.length - 1}
-              >
-                <ArrowDown className="h-4 w-4" aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                title={t("sources.deleteGroup")}
-                aria-label={t("sources.deleteGroup")}
-                onClick={() => {
-                  if (window.confirm(t("sources.deleteGroupConfirm", { name: group.name }))) {
-                    setDrafts((previous) => previous.filter((_, i) => i !== groupIndex));
-                  }
-                }}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden />
-              </Button>
-            </div>
-          </div>
-
-          <Tabs defaultValue="sources" className="mt-3">
-            <TabsList>
-              <TabsTrigger value="sources">{t("sources.sourcesTab")}</TabsTrigger>
-              <TabsTrigger value="options">{t("sources.optionsTab")}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="sources" className="mt-3 space-y-2">
-              <div className="flex justify-end">
+      {drafts.map((group, groupIndex) => {
+        const isOpen = expandedGroups.has(group.key);
+        const contentID = `source-group-${group.key}-details`;
+        return (
+          <section
+            key={group.key}
+            className="rounded-md border bg-card text-card-foreground"
+          >
+            <div className="flex flex-col gap-2 p-2 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  title={t("sources.addSource")}
-                  aria-label={t("sources.addSource")}
-                  onClick={() => addSource(groupIndex)}
+                  className="shrink-0"
+                  title={
+                    isOpen
+                      ? t("sources.collapseGroup")
+                      : t("sources.expandGroup")
+                  }
+                  aria-label={
+                    isOpen
+                      ? t("sources.collapseGroup")
+                      : t("sources.expandGroup")
+                  }
+                  aria-expanded={isOpen}
+                  aria-controls={contentID}
+                  onClick={() => toggleGroup(group.key)}
                 >
-                  <Plus className="h-4 w-4" aria-hidden />
+                  <ChevronRight
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none",
+                      isOpen && "rotate-90",
+                    )}
+                    aria-hidden
+                  />
+                </Button>
+                <Input
+                  name={`configurations.${groupIndex}.name`}
+                  value={group.name}
+                  onChange={(event) =>
+                    updateGroup(groupIndex, {
+                      ...group,
+                      name: event.target.value,
+                    })
+                  }
+                  aria-label={t("sources.groupName")}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 font-medium sm:max-w-xs"
+                  required
+                />
+              </div>
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title={t("sources.moveUp")}
+                  aria-label={t("sources.moveUp")}
+                  onClick={() => moveGroup(groupIndex, -1)}
+                  disabled={groupIndex === 0}
+                >
+                  <ArrowUp className="h-4 w-4" aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title={t("sources.moveDown")}
+                  aria-label={t("sources.moveDown")}
+                  onClick={() => moveGroup(groupIndex, 1)}
+                  disabled={groupIndex === drafts.length - 1}
+                >
+                  <ArrowDown className="h-4 w-4" aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title={t("sources.deleteGroup")}
+                  aria-label={t("sources.deleteGroup")}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        t("sources.deleteGroupConfirm", { name: group.name }),
+                      )
+                    ) {
+                      setDrafts((previous) =>
+                        previous.filter((_, i) => i !== groupIndex),
+                      );
+                      setExpandedGroups((previous) => {
+                        const next = new Set(previous);
+                        next.delete(group.key);
+                        return next;
+                      });
+                    }
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
                 </Button>
               </div>
-              {group.sources.map((source, sourceIndex) => {
-                const isOpen = expandedSources[source.key] ?? false;
-                return (
-                  <div key={source.key} className="rounded-md border">
-                    <div className="flex min-h-10 items-center gap-2 px-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedSources((previous) => ({
-                            ...previous,
-                            [source.key]: !isOpen,
-                          }))
-                        }
-                        className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-expanded={isOpen}
-                        aria-controls={`source-${source.key}-details`}
-                      >
-                        <ChevronRight
-                          className={cn("h-4 w-4 shrink-0 transition-transform", isOpen && "rotate-90")}
-                          aria-hidden
-                        />
-                        <span className="shrink-0 text-xs font-medium">
-                          {sourceKindLabel(source.kind)}
-                        </span>
-                        <span
-                          className="truncate text-xs text-muted-foreground"
-                          translate="no"
-                        >
-                          {source.value || sourcePlaceholder(source.kind)}
-                        </span>
-                      </button>
+            </div>
+
+            <CollapsiblePane id={contentID} open={isOpen}>
+              <div className="border-t px-3 pb-3">
+                <Tabs defaultValue="sources" className="mt-3">
+                  <TabsList>
+                    <TabsTrigger value="sources">
+                      {t("sources.sourcesTab")}
+                    </TabsTrigger>
+                    <TabsTrigger value="options">
+                      {t("sources.optionsTab")}
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="sources" className="mt-3 space-y-2">
+                    <div className="flex min-h-10 items-start justify-between gap-3">
+                      <p className="max-w-2xl py-2 text-sm text-muted-foreground">
+                        {t("sources.description")}
+                      </p>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        title={t("sources.moveUp")}
-                        aria-label={t("sources.moveUp")}
-                        onClick={() => moveSource(groupIndex, sourceIndex, -1)}
-                        disabled={sourceIndex === 0}
+                        className="shrink-0"
+                        title={t("sources.addSource")}
+                        aria-label={t("sources.addSource")}
+                        onClick={() => addSource(groupIndex)}
                       >
-                        <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title={t("sources.moveDown")}
-                        aria-label={t("sources.moveDown")}
-                        onClick={() => moveSource(groupIndex, sourceIndex, 1)}
-                        disabled={sourceIndex === group.sources.length - 1}
-                      >
-                        <ArrowDown className="h-3.5 w-3.5" aria-hidden />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title={t("common.delete")}
-                        aria-label={t("common.delete")}
-                        onClick={() =>
-                          updateGroup(groupIndex, {
-                            ...group,
-                            sources: group.sources.filter((_, i) => i !== sourceIndex),
-                          })
-                        }
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        <Plus className="h-4 w-4" aria-hidden />
                       </Button>
                     </div>
-                    <CollapsiblePane
-                      id={`source-${source.key}-details`}
-                      open={isOpen}
-                    >
-                      <div className="grid gap-3 border-t p-3 sm:grid-cols-[11rem_minmax(0,1fr)]">
-                        <div className="space-y-1">
-                          <Label htmlFor={`source-${source.key}-kind`}>
-                            {t("sources.kindLabel")}
-                          </Label>
-                          <Select
-                            value={source.kind}
-                            onValueChange={(value) =>
-                              updateSource(groupIndex, sourceIndex, {
-                                ...source,
-                                kind: value as SourceKind,
-                              })
-                            }
-                          >
-                            <SelectTrigger
-                              id={`source-${source.key}-kind`}
-                              name={`configurations.${groupIndex}.sources.${sourceIndex}.kind`}
+                    <div className="divide-y">
+                      {group.sources.map((source, sourceIndex) => (
+                        <div
+                          key={source.key}
+                          className="grid gap-3 py-3 sm:grid-cols-[11rem_minmax(0,1fr)_auto] sm:items-end"
+                        >
+                          <div className="space-y-1">
+                            <Label htmlFor={`source-${source.key}-kind`}>
+                              {t("sources.kindLabel")}
+                            </Label>
+                            <Select
+                              value={source.kind}
+                              onValueChange={(value) =>
+                                updateSource(groupIndex, sourceIndex, {
+                                  ...source,
+                                  kind: value as SourceKind,
+                                })
+                              }
                             >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="path">{t("sources.kindPath")}</SelectItem>
-                              <SelectItem value="url">{t("sources.kindUrl")}</SelectItem>
-                              <SelectItem value="cmd">{t("sources.kindCmd")}</SelectItem>
-                            </SelectContent>
-                          </Select>
+                              <SelectTrigger
+                                id={`source-${source.key}-kind`}
+                                name={`configurations.${groupIndex}.sources.${sourceIndex}.kind`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="path">
+                                  {t("sources.kindPath")}
+                                </SelectItem>
+                                <SelectItem value="url">
+                                  {t("sources.kindUrl")}
+                                </SelectItem>
+                                <SelectItem value="cmd">
+                                  {t("sources.kindCmd")}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="min-w-0 space-y-1">
+                            <Label htmlFor={`source-${source.key}-value`}>
+                              {t("sources.valueLabel")}
+                            </Label>
+                            <Input
+                              id={`source-${source.key}-value`}
+                              name={`configurations.${groupIndex}.sources.${sourceIndex}.value`}
+                              type={source.kind === "url" ? "url" : "text"}
+                              inputMode={
+                                source.kind === "url" ? "url" : undefined
+                              }
+                              value={source.value}
+                              onChange={(event) =>
+                                updateSource(groupIndex, sourceIndex, {
+                                  ...source,
+                                  value: event.target.value,
+                                })
+                              }
+                              placeholder={sourcePlaceholder(source.kind)}
+                              autoComplete="off"
+                              spellCheck={false}
+                              required
+                            />
+                          </div>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title={t("sources.moveUp")}
+                              aria-label={t("sources.moveUp")}
+                              onClick={() =>
+                                moveSource(groupIndex, sourceIndex, -1)
+                              }
+                              disabled={sourceIndex === 0}
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title={t("sources.moveDown")}
+                              aria-label={t("sources.moveDown")}
+                              onClick={() =>
+                                moveSource(groupIndex, sourceIndex, 1)
+                              }
+                              disabled={
+                                sourceIndex === group.sources.length - 1
+                              }
+                            >
+                              <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title={t("common.delete")}
+                              aria-label={t("common.delete")}
+                              onClick={() =>
+                                updateGroup(groupIndex, {
+                                  ...group,
+                                  sources: group.sources.filter(
+                                    (_, i) => i !== sourceIndex,
+                                  ),
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                            </Button>
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          <Label htmlFor={`source-${source.key}-value`}>
-                            {t("sources.valueLabel")}
-                          </Label>
-                          <Input
-                            id={`source-${source.key}-value`}
-                            name={`configurations.${groupIndex}.sources.${sourceIndex}.value`}
-                            type={source.kind === "url" ? "url" : "text"}
-                            inputMode={source.kind === "url" ? "url" : undefined}
-                            value={source.value}
-                            onChange={(event) =>
-                              updateSource(groupIndex, sourceIndex, {
-                                ...source,
-                                value: event.target.value,
-                              })
-                            }
-                            placeholder={sourcePlaceholder(source.kind)}
-                            autoComplete="off"
-                            spellCheck={false}
-                            required
-                          />
-                        </div>
+                      ))}
+                    </div>
+                  </TabsContent>
+                  <TabsContent value="options" className="mt-3">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          name={`configurations.${groupIndex}.includeDirect`}
+                          checked={group.includeDirect}
+                          onChange={(event) =>
+                            updateGroup(groupIndex, {
+                              ...group,
+                              includeDirect: event.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 shrink-0 rounded border-input"
+                        />
+                        <span>{t("sources.includeDirect")}</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          name={`configurations.${groupIndex}.enableUrlTest`}
+                          checked={group.enableUrlTest}
+                          onChange={(event) =>
+                            updateGroup(groupIndex, {
+                              ...group,
+                              enableUrlTest: event.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 shrink-0 rounded border-input"
+                        />
+                        <span>{t("sources.enableUrlTest")}</span>
+                      </label>
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label htmlFor={`group-${group.key}-include-groups`}>
+                          {t("sources.includeGroups")}
+                        </Label>
+                        <Input
+                          id={`group-${group.key}-include-groups`}
+                          name={`configurations.${groupIndex}.includeGroups`}
+                          value={group.includeGroups}
+                          onChange={(event) =>
+                            updateGroup(groupIndex, {
+                              ...group,
+                              includeGroups: event.target.value,
+                            })
+                          }
+                          placeholder={t("sources.includeGroupsPlaceholder")}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
                       </div>
-                    </CollapsiblePane>
-                  </div>
-                );
-              })}
-            </TabsContent>
-            <TabsContent value="options" className="mt-3">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    name={`configurations.${groupIndex}.includeDirect`}
-                    checked={group.includeDirect}
-                    onChange={(event) =>
-                      updateGroup(groupIndex, { ...group, includeDirect: event.target.checked })
-                    }
-                    className="h-4 w-4 shrink-0 rounded border-input"
-                  />
-                  <span>{t("sources.includeDirect")}</span>
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    name={`configurations.${groupIndex}.enableUrlTest`}
-                    checked={group.enableUrlTest}
-                    onChange={(event) =>
-                      updateGroup(groupIndex, { ...group, enableUrlTest: event.target.checked })
-                    }
-                    className="h-4 w-4 shrink-0 rounded border-input"
-                  />
-                  <span>{t("sources.enableUrlTest")}</span>
-                </label>
-                <div className="space-y-1 sm:col-span-2">
-                  <Label htmlFor={`group-${group.key}-include-groups`}>
-                    {t("sources.includeGroups")}
-                  </Label>
-                  <Input
-                    id={`group-${group.key}-include-groups`}
-                    name={`configurations.${groupIndex}.includeGroups`}
-                    value={group.includeGroups}
-                    onChange={(event) =>
-                      updateGroup(groupIndex, { ...group, includeGroups: event.target.value })
-                    }
-                    placeholder={t("sources.includeGroupsPlaceholder")}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </div>
-            </TabsContent>
-          </Tabs>
-        </section>
-      ))}
+            </CollapsiblePane>
+          </section>
+        );
+      })}
     </div>
   );
 }
