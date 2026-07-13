@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { CollapsiblePane } from "@/components/ui/collapsible-pane";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -13,17 +15,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { updateConfig } from "@/api/configs";
 import type { ConfigGroup, ConfigSource, MergeRule } from "@/api/types";
 
 type SourceKind = "path" | "url" | "cmd";
 
+let draftKey = 0;
+const nextDraftKey = () => `draft-${draftKey++}`;
+
 interface SourceDraft {
+  key: string;
   kind: SourceKind;
   value: string;
 }
 
 interface GroupDraft {
+  key: string;
   name: string;
   includeDirect: boolean;
   includeGroups: string;
@@ -32,16 +45,10 @@ interface GroupDraft {
 }
 
 function sourceToDraft(source: ConfigSource): SourceDraft {
-  if (source.path !== undefined && source.path !== "") {
-    return { kind: "path", value: source.path };
-  }
-  if (source.url !== undefined && source.url !== "") {
-    return { kind: "url", value: source.url };
-  }
-  if (source.cmd !== undefined && source.cmd !== "") {
-    return { kind: "cmd", value: source.cmd };
-  }
-  return { kind: "path", value: "" };
+  if (source.path) return { key: nextDraftKey(), kind: "path", value: source.path };
+  if (source.url) return { key: nextDraftKey(), kind: "url", value: source.url };
+  if (source.cmd) return { key: nextDraftKey(), kind: "cmd", value: source.cmd };
+  return { key: nextDraftKey(), kind: "path", value: "" };
 }
 
 function draftToSource(draft: SourceDraft): ConfigSource {
@@ -55,25 +62,15 @@ function draftToSource(draft: SourceDraft): ConfigSource {
   }
 }
 
-function normalizeConfigGroup(group: ConfigGroup | ConfigSource[]): ConfigGroup {
-  if (Array.isArray(group)) {
-    return { sources: group };
-  }
-  return group;
-}
-
 function ruleToDrafts(rule: MergeRule): GroupDraft[] {
-  const groups = rule.configurations ?? {};
-  return Object.keys(groups).map((name) => {
-    const group = normalizeConfigGroup(groups[name]);
-    return {
-      name,
-      includeDirect: group.includeDirect ?? false,
-      includeGroups: (group.includeGroups ?? []).join(", "),
-      enableUrlTest: group.enableUrlTest ?? true,
-      sources: (group.sources ?? []).map(sourceToDraft),
-    };
-  });
+  return (rule.configurations ?? []).map((group) => ({
+    key: nextDraftKey(),
+    name: group.name,
+    includeDirect: group.includeDirect ?? false,
+    includeGroups: (group.includeGroups ?? []).join(", "),
+    enableUrlTest: group.enableUrlTest ?? true,
+    sources: (group.sources ?? []).map(sourceToDraft),
+  }));
 }
 
 function parseIncludeGroups(value: string): string[] {
@@ -83,20 +80,16 @@ function parseIncludeGroups(value: string): string[] {
     .filter(Boolean);
 }
 
-function draftsToConfigurations(drafts: GroupDraft[]): Record<string, ConfigGroup> {
-  const result: Record<string, ConfigGroup> = {};
-  for (const draft of drafts) {
-    if (!draft.name.trim()) {
-      continue;
-    }
-    result[draft.name.trim()] = {
+function draftsToConfigurations(drafts: GroupDraft[]): ConfigGroup[] {
+  return drafts
+    .filter((draft) => draft.name.trim())
+    .map((draft) => ({
+      name: draft.name.trim(),
       sources: draft.sources.map(draftToSource),
       includeDirect: draft.includeDirect,
       includeGroups: parseIncludeGroups(draft.includeGroups),
       enableUrlTest: draft.enableUrlTest,
-    };
-  }
-  return result;
+    }));
 }
 
 interface SourcesTabProps {
@@ -109,10 +102,11 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<GroupDraft[]>(() => ruleToDrafts(rule));
   const [newGroupName, setNewGroupName] = useState("");
+  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
 
-  // Reset local drafts when the upstream rule changes (e.g. after invalidation).
   useEffect(() => {
     setDrafts(ruleToDrafts(rule));
+    setExpandedSources({});
   }, [rule]);
 
   const mutation = useMutation({
@@ -131,27 +125,30 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
   });
 
   const updateGroup = (index: number, next: GroupDraft) => {
-    setDrafts((prev) => prev.map((group, i) => (i === index ? next : group)));
+    setDrafts((previous) => previous.map((group, i) => (i === index ? next : group)));
   };
 
-  const removeGroup = (index: number) => {
-    setDrafts((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const renameGroup = (index: number, name: string) => {
-    updateGroup(index, { ...drafts[index], name });
+  const moveGroup = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= drafts.length) return;
+    setDrafts((previous) => {
+      const next = [...previous];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   };
 
   const addGroup = () => {
     const name = newGroupName.trim();
     if (!name) return;
-    if (drafts.some((g) => g.name === name)) {
+    if (drafts.some((group) => group.name === name)) {
       toast.error(t("sources.groupExists"));
       return;
     }
-    setDrafts((prev) => [
-      ...prev,
+    setDrafts((previous) => [
+      ...previous,
       {
+        key: nextDraftKey(),
         name,
         includeDirect: false,
         includeGroups: "",
@@ -163,56 +160,41 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
   };
 
   const addSource = (groupIndex: number) => {
-    const next = { ...drafts[groupIndex] };
-    next.sources = [...next.sources, { kind: "path", value: "" }];
-    updateGroup(groupIndex, next);
+    const group = drafts[groupIndex];
+    const source = { key: nextDraftKey(), kind: "path" as const, value: "" };
+    updateGroup(groupIndex, { ...group, sources: [...group.sources, source] });
+    setExpandedSources((previous) => ({ ...previous, [source.key]: true }));
   };
 
-  const updateSource = (
-    groupIndex: number,
-    sourceIndex: number,
-    next: SourceDraft,
-  ) => {
-    const group = { ...drafts[groupIndex] };
-    group.sources = group.sources.map((source, i) =>
-      i === sourceIndex ? next : source,
-    );
-    updateGroup(groupIndex, group);
+  const updateSource = (groupIndex: number, sourceIndex: number, next: SourceDraft) => {
+    const group = drafts[groupIndex];
+    updateGroup(groupIndex, {
+      ...group,
+      sources: group.sources.map((source, i) => (i === sourceIndex ? next : source)),
+    });
   };
 
-  const removeSource = (groupIndex: number, sourceIndex: number) => {
-    const group = { ...drafts[groupIndex] };
-    group.sources = group.sources.filter((_, i) => i !== sourceIndex);
-    updateGroup(groupIndex, group);
-  };
-
-  const moveSource = (
-    groupIndex: number,
-    sourceIndex: number,
-    direction: -1 | 1,
-  ) => {
-    const group = { ...drafts[groupIndex] };
+  const moveSource = (groupIndex: number, sourceIndex: number, direction: -1 | 1) => {
+    const group = drafts[groupIndex];
     const target = sourceIndex + direction;
     if (target < 0 || target >= group.sources.length) return;
-    const next = [...group.sources];
-    [next[sourceIndex], next[target]] = [next[target], next[sourceIndex]];
-    group.sources = next;
-    updateGroup(groupIndex, group);
+    const sources = [...group.sources];
+    [sources[sourceIndex], sources[target]] = [sources[target], sources[sourceIndex]];
+    updateGroup(groupIndex, { ...group, sources });
   };
 
-  const updateIncludeDirect = (groupIndex: number, includeDirect: boolean) => {
-    updateGroup(groupIndex, { ...drafts[groupIndex], includeDirect });
+  const sourceKindLabel = (kind: SourceKind) => {
+    switch (kind) {
+      case "path":
+        return t("sources.kindPath");
+      case "url":
+        return t("sources.kindUrl");
+      case "cmd":
+        return t("sources.kindCmd");
+    }
   };
 
-  const updateIncludeGroups = (groupIndex: number, includeGroups: string) => {
-    updateGroup(groupIndex, { ...drafts[groupIndex], includeGroups });
-  };
-
-  const updateEnableUrlTest = (groupIndex: number, enableUrlTest: boolean) => {
-    updateGroup(groupIndex, { ...drafts[groupIndex], enableUrlTest });
-  };
-
-  const valuePlaceholder = (kind: SourceKind) => {
+  const sourcePlaceholder = (kind: SourceKind) => {
     switch (kind) {
       case "path":
         return t("sources.valuePath");
@@ -224,65 +206,213 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        {drafts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {t("configs.empty")}
-          </p>
-        ) : (
-          drafts.map((group, groupIndex) => (
-            <div
-              key={groupIndex}
-              className="rounded-md border bg-card p-4 space-y-3"
-            >
-              <div className="flex items-center gap-2">
-                <Label className="shrink-0">{t("sources.groupName")}</Label>
-                <Input
-                  value={group.name}
-                  onChange={(event) =>
-                    renameGroup(groupIndex, event.target.value)
+    <div className="space-y-5">
+      <div className="flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-center">
+        <Input
+          value={newGroupName}
+          onChange={(event) => setNewGroupName(event.target.value)}
+          placeholder={t("sources.newGroupName")}
+          className="sm:max-w-xs"
+        />
+        <Button type="button" variant="outline" onClick={addGroup}>
+          <Plus className="mr-1.5 h-4 w-4" aria-hidden />
+          {t("sources.addGroup")}
+        </Button>
+        <Button
+          type="button"
+          className="sm:ml-auto"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending}
+        >
+          {mutation.isPending ? t("common.loading") : t("common.save")}
+        </Button>
+      </div>
+
+      {drafts.map((group, groupIndex) => (
+        <section key={group.key} className="border-b pb-5 last:border-b-0">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              value={group.name}
+              onChange={(event) =>
+                updateGroup(groupIndex, { ...group, name: event.target.value })
+              }
+              aria-label={t("sources.groupName")}
+              className="font-medium sm:max-w-xs"
+              required
+            />
+            <div className="flex items-center gap-1 sm:ml-auto">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title={t("sources.moveUp")}
+                aria-label={t("sources.moveUp")}
+                onClick={() => moveGroup(groupIndex, -1)}
+                disabled={groupIndex === 0}
+              >
+                <ArrowUp className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title={t("sources.moveDown")}
+                aria-label={t("sources.moveDown")}
+                onClick={() => moveGroup(groupIndex, 1)}
+                disabled={groupIndex === drafts.length - 1}
+              >
+                <ArrowDown className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title={t("sources.deleteGroup")}
+                aria-label={t("sources.deleteGroup")}
+                onClick={() => {
+                  if (window.confirm(t("sources.deleteGroupConfirm", { name: group.name }))) {
+                    setDrafts((previous) => previous.filter((_, i) => i !== groupIndex));
                   }
-                  className="max-w-xs"
-                  required
-                />
-                <div className="ml-auto flex gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => addSource(groupIndex)}
-                    className="gap-1.5"
-                  >
-                    <Plus className="h-4 w-4" aria-hidden />
-                    {t("sources.addSource")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          t("sources.deleteGroupConfirm", { name: group.name }),
-                        )
-                      ) {
-                        removeGroup(groupIndex);
-                      }
-                    }}
-                    aria-label={t("sources.deleteGroup")}
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden />
-                  </Button>
-                </div>
+                }}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </Button>
+            </div>
+          </div>
+
+          <Tabs defaultValue="sources" className="mt-3">
+            <TabsList>
+              <TabsTrigger value="sources">{t("sources.sourcesTab")}</TabsTrigger>
+              <TabsTrigger value="options">{t("sources.optionsTab")}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="sources" className="mt-3 space-y-2">
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title={t("sources.addSource")}
+                  aria-label={t("sources.addSource")}
+                  onClick={() => addSource(groupIndex)}
+                >
+                  <Plus className="h-4 w-4" aria-hidden />
+                </Button>
               </div>
-              <div className="grid gap-3 border-t pt-3 sm:grid-cols-2 sm:items-center">
+              {group.sources.map((source, sourceIndex) => {
+                const isOpen = expandedSources[source.key] ?? false;
+                return (
+                  <div key={source.key} className="rounded-md border">
+                    <div className="flex min-h-10 items-center gap-2 px-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedSources((previous) => ({
+                            ...previous,
+                            [source.key]: !isOpen,
+                          }))
+                        }
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <ChevronRight
+                          className={cn("h-4 w-4 shrink-0 transition-transform", isOpen && "rotate-90")}
+                          aria-hidden
+                        />
+                        <span className="shrink-0 text-xs font-medium">
+                          {sourceKindLabel(source.kind)}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {source.value || sourcePlaceholder(source.kind)}
+                        </span>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={t("sources.moveUp")}
+                        aria-label={t("sources.moveUp")}
+                        onClick={() => moveSource(groupIndex, sourceIndex, -1)}
+                        disabled={sourceIndex === 0}
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={t("sources.moveDown")}
+                        aria-label={t("sources.moveDown")}
+                        onClick={() => moveSource(groupIndex, sourceIndex, 1)}
+                        disabled={sourceIndex === group.sources.length - 1}
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={t("common.delete")}
+                        aria-label={t("common.delete")}
+                        onClick={() =>
+                          updateGroup(groupIndex, {
+                            ...group,
+                            sources: group.sources.filter((_, i) => i !== sourceIndex),
+                          })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      </Button>
+                    </div>
+                    <CollapsiblePane open={isOpen}>
+                      <div className="grid gap-3 border-t p-3 sm:grid-cols-[11rem_minmax(0,1fr)]">
+                        <div className="space-y-1">
+                          <Label>{t("sources.kindLabel")}</Label>
+                          <Select
+                            value={source.kind}
+                            onValueChange={(value) =>
+                              updateSource(groupIndex, sourceIndex, {
+                                ...source,
+                                kind: value as SourceKind,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="path">{t("sources.kindPath")}</SelectItem>
+                              <SelectItem value="url">{t("sources.kindUrl")}</SelectItem>
+                              <SelectItem value="cmd">{t("sources.kindCmd")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label>{t("sources.valueLabel")}</Label>
+                          <Input
+                            value={source.value}
+                            onChange={(event) =>
+                              updateSource(groupIndex, sourceIndex, {
+                                ...source,
+                                value: event.target.value,
+                              })
+                            }
+                            placeholder={sourcePlaceholder(source.kind)}
+                            required
+                          />
+                        </div>
+                      </div>
+                    </CollapsiblePane>
+                  </div>
+                );
+              })}
+            </TabsContent>
+            <TabsContent value="options" className="mt-3">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={group.includeDirect}
                     onChange={(event) =>
-                      updateIncludeDirect(groupIndex, event.target.checked)
+                      updateGroup(groupIndex, { ...group, includeDirect: event.target.checked })
                     }
                     className="h-4 w-4 shrink-0 rounded border-input"
                   />
@@ -293,136 +423,27 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                     type="checkbox"
                     checked={group.enableUrlTest}
                     onChange={(event) =>
-                      updateEnableUrlTest(groupIndex, event.target.checked)
+                      updateGroup(groupIndex, { ...group, enableUrlTest: event.target.checked })
                     }
                     className="h-4 w-4 shrink-0 rounded border-input"
                   />
                   <span>{t("sources.enableUrlTest")}</span>
                 </label>
                 <div className="space-y-1 sm:col-span-2">
-                  <Label htmlFor={`include-groups-${groupIndex}`}>
-                    {t("sources.includeGroups")}
-                  </Label>
+                  <Label>{t("sources.includeGroups")}</Label>
                   <Input
-                    id={`include-groups-${groupIndex}`}
                     value={group.includeGroups}
                     onChange={(event) =>
-                      updateIncludeGroups(groupIndex, event.target.value)
+                      updateGroup(groupIndex, { ...group, includeGroups: event.target.value })
                     }
                     placeholder={t("sources.includeGroupsPlaceholder")}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    {t("sources.includeGroupsHelp")}
-                  </p>
                 </div>
               </div>
-              {group.sources.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {t("sources.addSource")}…
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {group.sources.map((source, sourceIndex) => (
-                    <div
-                      key={sourceIndex}
-                      className="flex flex-col gap-2 rounded-md border p-2 sm:flex-row sm:items-center"
-                    >
-                      <Select
-                        value={source.kind}
-                        onValueChange={(value) =>
-                          updateSource(groupIndex, sourceIndex, {
-                            ...source,
-                            kind: value as SourceKind,
-                          })
-                        }
-                      >
-                        <SelectTrigger className="w-full sm:w-44">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="path">
-                            {t("sources.kindPath")}
-                          </SelectItem>
-                          <SelectItem value="url">
-                            {t("sources.kindUrl")}
-                          </SelectItem>
-                          <SelectItem value="cmd">
-                            {t("sources.kindCmd")}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        value={source.value}
-                        onChange={(event) =>
-                          updateSource(groupIndex, sourceIndex, {
-                            ...source,
-                            value: event.target.value,
-                          })
-                        }
-                        placeholder={valuePlaceholder(source.kind)}
-                        required
-                      />
-                      <div className="flex gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t("sources.moveUp")}
-                          onClick={() =>
-                            moveSource(groupIndex, sourceIndex, -1)
-                          }
-                          disabled={sourceIndex === 0}
-                        >
-                          <ArrowUp className="h-4 w-4" aria-hidden />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t("sources.moveDown")}
-                          onClick={() =>
-                            moveSource(groupIndex, sourceIndex, 1)
-                          }
-                          disabled={sourceIndex === group.sources.length - 1}
-                        >
-                          <ArrowDown className="h-4 w-4" aria-hidden />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t("common.delete")}
-                          onClick={() => removeSource(groupIndex, sourceIndex)}
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Input
-          value={newGroupName}
-          onChange={(event) => setNewGroupName(event.target.value)}
-          placeholder={t("sources.newGroupName")}
-          className="max-w-xs"
-        />
-        <Button type="button" variant="outline" onClick={addGroup}>
-          {t("sources.addGroup")}
-        </Button>
-      </div>
-      <Button
-        type="button"
-        onClick={() => mutation.mutate()}
-        disabled={mutation.isPending}
-      >
-        {mutation.isPending ? t("common.loading") : t("common.save")}
-      </Button>
+            </TabsContent>
+          </Tabs>
+        </section>
+      ))}
     </div>
   );
 }

@@ -236,6 +236,13 @@ func (api *httpAPI) handleConfigs(w http.ResponseWriter, r *http.Request, parts 
 		case "rule-groups":
 			api.handleRuleGroups(w, r, id, parts[4:])
 			return
+		case "proxy-groups":
+			if len(parts) != 4 {
+				writeAPIError(w, notFound("not found"))
+				return
+			}
+			api.handleProxyGroupTargets(w, r, id)
+			return
 		}
 	}
 
@@ -565,6 +572,9 @@ func (api *httpAPI) validateMergeRule(rule MergeRule) error {
 	if rule.CacheDurationSeconds < 0 {
 		return fmt.Errorf("cacheDurationSeconds must not be negative")
 	}
+	if err := validateConfigGroups(rule.Configurations); err != nil {
+		return err
+	}
 	if _, err := api.resolveManagedPath(rule.Template); err != nil {
 		return fmt.Errorf("template: %w", err)
 	}
@@ -583,10 +593,7 @@ func (api *httpAPI) validateMergeRule(rule MergeRule) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("template: %w", err)
 	}
-	for group, configGroup := range rule.Configurations {
-		if strings.TrimSpace(group) == "" {
-			return fmt.Errorf("configuration group name is required")
-		}
+	for _, configGroup := range rule.Configurations {
 		for _, source := range configGroup.Sources {
 			if err := validateConfigSource(source); err != nil {
 				return err
@@ -610,8 +617,8 @@ func (api *httpAPI) resolveMergeRule(rule MergeRule) (MergeRule, error) {
 	}
 	next.Template = template
 
-	next.Configurations = make(map[string]ConfigGroup, len(rule.Configurations))
-	for name, configGroup := range rule.Configurations {
+	next.Configurations = make(ConfigGroups, len(rule.Configurations))
+	for i, configGroup := range rule.Configurations {
 		copied := make([]ConfigSource, 0, len(configGroup.Sources))
 		for _, source := range configGroup.Sources {
 			if source.Path != "" {
@@ -624,7 +631,7 @@ func (api *httpAPI) resolveMergeRule(rule MergeRule) (MergeRule, error) {
 			copied = append(copied, source)
 		}
 		configGroup.Sources = copied
-		next.Configurations[name] = configGroup
+		next.Configurations[i] = configGroup
 	}
 
 	return next, nil

@@ -59,7 +59,7 @@ export function ConfigDetailPage() {
         </Card>
       ) : ruleQuery.data ? (
         <Tabs defaultValue="overview">
-          <TabsList>
+          <TabsList className="max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="overview">{t("detail.tabOverview")}</TabsTrigger>
             <TabsTrigger value="sources">{t("detail.tabSources")}</TabsTrigger>
             <TabsTrigger value="providers">
@@ -84,15 +84,7 @@ export function ConfigDetailPage() {
             </Card>
           </TabsContent>
           <TabsContent value="sources">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("sources.title")}</CardTitle>
-                <CardDescription>{t("sources.description")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <SourcesTab id={id} rule={ruleQuery.data} />
-              </CardContent>
-            </Card>
+            <SourcesTab id={id} rule={ruleQuery.data} />
           </TabsContent>
           <TabsContent value="providers">
             <Card>

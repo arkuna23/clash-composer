@@ -8,6 +8,7 @@ export interface ConfigSource {
 }
 
 export interface ConfigGroup {
+  name: string;
   sources?: ConfigSource[];
   includeDirect?: boolean;
   includeGroups?: string[];
@@ -16,7 +17,7 @@ export interface ConfigGroup {
 
 export interface MergeRule {
   template: string;
-  configurations: Record<string, ConfigGroup | ConfigSource[]>;
+  configurations: ConfigGroup[];
   rulesetStrategy?: RulesetStrategy;
   cacheDurationSeconds?: number;
 }
@@ -43,7 +44,8 @@ export interface RuleGroup {
 export interface CreateRuleGroupPayload {
   name: string;
   index: number;
-  rules: string[];
+  rules?: string[];
+  rulesYaml?: string;
 }
 
 export interface UpdateRuleGroupPayload {
@@ -52,7 +54,9 @@ export interface UpdateRuleGroupPayload {
 }
 
 export interface AddRulePayload {
-  rule: string;
+  rule?: string;
+  rules?: string[];
+  rulesYaml?: string;
   index?: number;
 }
 

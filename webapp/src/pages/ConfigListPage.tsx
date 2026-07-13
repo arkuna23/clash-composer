@@ -315,7 +315,7 @@ function CreateConfigDialog({
     try {
       const rule: MergeRule = {
         template: template.trim(),
-        configurations: {},
+        configurations: [],
         rulesetStrategy: strategy,
       };
       await createConfig(id.trim(), rule);

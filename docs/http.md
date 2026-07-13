@@ -90,8 +90,9 @@ Content-Type: application/json
 ```json
 {
   "template": "template.yaml",
-  "configurations": {
-    "High": {
+  "configurations": [
+    {
+      "name": "High",
       "sources": [
         {
           "path": "high.yaml"
@@ -101,7 +102,8 @@ Content-Type: application/json
       "enableUrlTest": true,
       "includeGroups": ["Common"]
     },
-    "Common": {
+    {
+      "name": "Common",
       "sources": [
         {
           "url": "https://example.com/subscription.yaml"
@@ -109,15 +111,15 @@ Content-Type: application/json
       ],
       "includeDirect": true
     }
-  },
+  ],
   "cacheDurationSeconds": 0,
   "rulesetStrategy": "url-ruleset"
 }
 ```
 
-每个配置分组的 `sources` 支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
+`configurations` 数组顺序决定生成代理分组的顺序。每个配置分组的 `sources` 支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
 
-`enableUrlTest` 缺省或为 `true` 时会生成 `<分组名>-UrlTest`；设为 `false` 时只生成 `<分组名>` select，节点和插入项直接进入该 select。`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组；`includeGroups` 可以插入其他配置分组名、模板中已有的 proxy group 名称，或内置的 `DIRECT` / `REJECT`。旧版数组结构仍可读取，API 返回时会规范化为对象结构。
+`enableUrlTest` 缺省或为 `true` 时会生成 `<分组名>-UrlTest`；设为 `false` 时只生成 `<分组名>` select，节点和插入项直接进入该 select。`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组；`includeGroups` 可以插入其他配置分组名、模板中已有的 proxy group 名称，或内置的 `DIRECT` / `REJECT`。旧版对象结构和旧版来源数组仍可读取，API 返回时会规范化为有序数组。
 
 创建成功返回 `201 Created` 和保存后的 JSON。若配置已存在，返回 `409 Conflict`。
 
@@ -325,9 +327,19 @@ Content-Type: application/json
 }
 ```
 
+初始规则也可以通过 YAML 列表或订阅文件中的 `rules:` 内容提交：
+
+```json
+{
+  "name": "google",
+  "index": 2,
+  "rulesYaml": "rules:\n  - RULE-SET,google,High\n  - DOMAIN-SUFFIX,google.com,High"
+}
+```
+
 - `index` 必填，表示新分组插入到当前分组列表中的位置。
 - `index` 必须大于 `0`，因此不能插入到 `default` 前面。
-- `rules` 至少包含一条规则，因为空分组无法稳定写回 YAML。
+- `rules` 或 `rulesYaml` 必须提供且只能提供一种，并且至少包含一条规则，因为空分组无法稳定写回 YAML。
 - 分组已存在时返回 `409 Conflict`。
 
 ### 获取规则分组
@@ -358,6 +370,7 @@ Content-Type: application/json
 ```
 
 - 传 `name` 时会重命名分组。
+- 重命名会同步更新模板内全部规则中精确匹配旧名称的策略目标字段。
 - 传 `rules` 时会替换该分组内的全部规则。
 - `default` 分组不能重命名。
 
@@ -378,19 +391,40 @@ Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
-请求体：
+请求体可使用规则数组：
 
 ```json
 {
-  "rule": "DOMAIN-SUFFIX,google.com,High",
+  "rules": [
+    "DOMAIN-SUFFIX,google.com,High",
+    "DOMAIN-SUFFIX,googleapis.com,High"
+  ],
   "index": 1
+}
+```
+
+也可以直接提交 YAML 列表或订阅文件中的 `rules:` 内容：
+
+```json
+{
+  "rulesYaml": "rules:\n  - DOMAIN-SUFFIX,google.com,High\n  - DOMAIN-SUFFIX,googleapis.com,High"
 }
 ```
 
 - `index` 可选；未传时追加到分组末尾。
 - `index` 表示分组内规则位置，从 `0` 开始。
+- `rule` 单条格式继续兼容，但 `rule`、`rules`、`rulesYaml` 只能使用一种。
 
 成功返回更新后的分组。
+
+### 列出可用策略目标
+
+```http
+GET /api/configs/{id}/template/proxy-groups
+Authorization: Bearer <token>
+```
+
+返回 `DIRECT`、`REJECT`、配置分组、启用的 UrlTest 分组和模板已有 proxy group 名称，供批量生成规则时选择。
 
 ### 获取分组内单条规则
 

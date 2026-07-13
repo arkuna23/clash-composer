@@ -156,8 +156,9 @@ proxies:
 		}),
 	})
 
-	configs, err := loadConfigurations(map[string]ConfigGroup{
-		"Mixed": {
+	configs, err := loadConfigurations(ConfigGroups{
+		{
+			Name: "Mixed",
 			Sources: []ConfigSource{
 				{Path: pathFile},
 				{Url: "https://example.com/url.yaml"},
@@ -169,7 +170,7 @@ proxies:
 		t.Fatalf("load configurations: %v", err)
 	}
 
-	got := configs["Mixed"]
+	got := configs[0]
 	if len(got) != 3 {
 		t.Fatalf("len(Mixed) = %d, want 3", len(got))
 	}
@@ -227,13 +228,13 @@ proxies:
 	}
 
 	type loadResult struct {
-		configs map[string][]*config.RawConfig
+		configs [][]*config.RawConfig
 		err     error
 	}
 	done := make(chan loadResult, 1)
 	go func() {
-		configs, err := loadConfigurations(map[string]ConfigGroup{
-			"Concurrent": {Sources: sources},
+		configs, err := loadConfigurations(ConfigGroups{
+			{Name: "Concurrent", Sources: sources},
 		}, MergeOptions{})
 		done <- loadResult{configs: configs, err: err}
 	}()
@@ -260,7 +261,7 @@ proxies:
 		t.Fatalf("max active = %d, want %d", got, maxConcurrentSources)
 	}
 
-	got := result.configs["Concurrent"]
+	got := result.configs[0]
 	if len(got) != totalSources {
 		t.Fatalf("len(Concurrent) = %d, want %d", len(got), totalSources)
 	}
@@ -295,8 +296,9 @@ proxies:
 		}),
 	})
 
-	_, err := loadConfigurations(map[string]ConfigGroup{
-		"Concurrent": {
+	_, err := loadConfigurations(ConfigGroups{
+		{
+			Name: "Concurrent",
 			Sources: []ConfigSource{
 				{Url: "https://example.com/ok.yaml"},
 				{Url: "https://example.com/bad.yaml?bad=true"},
@@ -453,8 +455,9 @@ proxies:
 
 	cfg, err := MergeWithOptions(MergeRule{
 		Template: templateFile,
-		Configurations: map[string]ConfigGroup{
-			"Cmd": {
+		Configurations: ConfigGroups{
+			{
+				Name:    "Cmd",
 				Sources: []ConfigSource{{Cmd: "cat cmd.yaml"}},
 			},
 		},
@@ -498,8 +501,9 @@ proxies:
 
 	_, data, err := MergeYAMLWithOptions(MergeRule{
 		Template: templateFile,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {
+		Configurations: ConfigGroups{
+			{
+				Name:    "Auto",
 				Sources: []ConfigSource{{Path: proxyFile}},
 			},
 		},
@@ -575,8 +579,9 @@ proxies:
 
 	cfg, err := Merge(MergeRule{
 		Template: templateFile,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {
+		Configurations: ConfigGroups{
+			{
+				Name:    "Auto",
 				Sources: []ConfigSource{{Path: firstFile}, {Path: secondFile}},
 			},
 		},
@@ -631,9 +636,9 @@ proxies:
 
 	cfg, err := Merge(MergeRule{
 		Template: templateFile,
-		Configurations: map[string]ConfigGroup{
-			"Left":  {Sources: []ConfigSource{{Path: leftFile}}},
-			"Right": {Sources: []ConfigSource{{Path: rightFile}}},
+		Configurations: ConfigGroups{
+			{Name: "Left", Sources: []ConfigSource{{Path: leftFile}}},
+			{Name: "Right", Sources: []ConfigSource{{Path: rightFile}}},
 		},
 	})
 	if err != nil {
@@ -696,8 +701,8 @@ proxies:
 
 			_, err := Merge(MergeRule{
 				Template: templateFile,
-				Configurations: map[string]ConfigGroup{
-					"Auto": {Sources: []ConfigSource{{Path: proxyFile}}},
+				Configurations: ConfigGroups{
+					{Name: "Auto", Sources: []ConfigSource{{Path: proxyFile}}},
 				},
 			})
 			if err == nil {
@@ -723,9 +728,82 @@ func TestConfigGroupUnmarshalLegacyArray(t *testing.T) {
 		t.Fatalf("unmarshal legacy rule: %v", err)
 	}
 
-	got := rule.Configurations["Legacy"].Sources
+	if len(rule.Configurations) != 1 || rule.Configurations[0].Name != "Legacy" {
+		t.Fatalf("legacy configurations = %#v", rule.Configurations)
+	}
+	got := rule.Configurations[0].Sources
 	if len(got) != 1 || got[0].Path != "legacy.yaml" {
 		t.Fatalf("legacy sources = %#v", got)
+	}
+}
+
+func TestConfigGroupsPreserveJSONOrder(t *testing.T) {
+	var rule MergeRule
+	if err := json.Unmarshal([]byte(`{
+		"template": "template.yaml",
+		"configurations": {
+			"Second": {"sources": []},
+			"First": {"sources": []}
+		}
+	}`), &rule); err != nil {
+		t.Fatalf("unmarshal legacy groups: %v", err)
+	}
+	if got := []string{rule.Configurations[0].Name, rule.Configurations[1].Name}; strings.Join(got, ",") != "Second,First" {
+		t.Fatalf("configuration order = %#v", got)
+	}
+
+	data, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatalf("marshal normalized rule: %v", err)
+	}
+	if !strings.Contains(string(data), `"configurations":[{"name":"Second"`) {
+		t.Fatalf("configurations were not normalized to an array: %s", data)
+	}
+}
+
+func TestMergePreservesConfigurationGroupOrder(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("proxy-groups: []\nrules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	cfg, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: ConfigGroups{
+			{Name: "Second"},
+			{Name: "First"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("merge ordered groups: %v", err)
+	}
+	got := []string{}
+	for _, group := range cfg.ProxyGroup {
+		got = append(got, group["name"].(string))
+	}
+	want := []string{"Second-UrlTest", "Second", "First-UrlTest", "First"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("proxy group order = %#v, want %#v", got, want)
+	}
+}
+
+func TestMergeRejectsDuplicateConfigurationGroupNames(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("rules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+
+	_, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: ConfigGroups{
+			{Name: "Duplicate"},
+			{Name: "Duplicate"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate configuration group") {
+		t.Fatalf("duplicate group error = %v", err)
 	}
 }
 
@@ -756,13 +834,14 @@ proxies:
 
 	cfg, err := Merge(MergeRule{
 		Template: templateFile,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {
+		Configurations: ConfigGroups{
+			{
+				Name:          "Auto",
 				Sources:       []ConfigSource{{Path: proxyFile}},
 				IncludeDirect: true,
 				IncludeGroups: []string{"TemplateGroup", "Other"},
 			},
-			"Other": {},
+			{Name: "Other"},
 		},
 	})
 	if err != nil {
@@ -817,14 +896,15 @@ proxies:
 	disabled := false
 	cfg, err := Merge(MergeRule{
 		Template: templateFile,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {
+		Configurations: ConfigGroups{
+			{
+				Name:          "Auto",
 				Sources:       []ConfigSource{{Path: proxyFile}},
 				IncludeDirect: true,
 				IncludeGroups: []string{"TemplateGroup", "Other"},
 				EnableURLTest: &disabled,
 			},
-			"Other": {},
+			{Name: "Other"},
 		},
 	})
 	if err != nil {
@@ -850,27 +930,27 @@ func TestMergeRejectsInvalidGroupIncludes(t *testing.T) {
 
 	testCases := []struct {
 		name   string
-		groups map[string]ConfigGroup
+		groups ConfigGroups
 		want   string
 	}{
 		{
 			name: "empty",
-			groups: map[string]ConfigGroup{
-				"Auto": {IncludeGroups: []string{""}},
+			groups: ConfigGroups{
+				{Name: "Auto", IncludeGroups: []string{""}},
 			},
 			want: "empty proxy group name",
 		},
 		{
 			name: "self",
-			groups: map[string]ConfigGroup{
-				"Auto": {IncludeGroups: []string{"Auto"}},
+			groups: ConfigGroups{
+				{Name: "Auto", IncludeGroups: []string{"Auto"}},
 			},
 			want: "cannot include itself",
 		},
 		{
 			name: "missing",
-			groups: map[string]ConfigGroup{
-				"Auto": {IncludeGroups: []string{"Missing"}},
+			groups: ConfigGroups{
+				{Name: "Auto", IncludeGroups: []string{"Missing"}},
 			},
 			want: "unknown proxy group",
 		},

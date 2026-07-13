@@ -24,12 +24,72 @@ import {
   deleteRule,
   deleteRuleGroup,
   listRuleGroups,
+  listProxyGroupTargets,
   updateRule,
   updateRuleGroup,
 } from "@/api/ruleGroups";
 import type { RuleGroup } from "@/api/types";
+import type { AddRulePayload } from "@/api/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 const DEFAULT_GROUP = "default";
+const CUSTOM_TARGET = "__custom";
+const RULE_TYPES = [
+  "DOMAIN",
+  "DOMAIN-SUFFIX",
+  "DOMAIN-KEYWORD",
+  "IP-CIDR",
+  "IP-CIDR6",
+] as const;
+
+interface RuleBatchDraft {
+  mode: "yaml" | "generate";
+  yaml: string;
+  ruleType: (typeof RULE_TYPES)[number];
+  values: string;
+  target: string;
+  customTarget: string;
+}
+
+function emptyRuleBatch(targets: string[]): RuleBatchDraft {
+  return {
+    mode: "yaml",
+    yaml: "",
+    ruleType: "DOMAIN-SUFFIX",
+    values: "",
+    target: targets[0] ?? CUSTOM_TARGET,
+    customTarget: "",
+  };
+}
+
+function ruleBatchPayload(draft: RuleBatchDraft): AddRulePayload | null {
+  if (draft.mode === "yaml") {
+    return draft.yaml.trim() ? { rulesYaml: draft.yaml } : null;
+  }
+  const target =
+    draft.target === CUSTOM_TARGET ? draft.customTarget.trim() : draft.target;
+  if (!target) return null;
+  const values = draft.values
+    .split("\n")
+    .map((value) => value.trim().replace(/^\-\s*/, ""))
+    .filter(Boolean);
+  if (values.length === 0) return null;
+  return {
+    rules: values.map((value) => `${draft.ruleType},${value},${target}`),
+  };
+}
 
 interface RuleGroupsTabProps {
   id: string;
@@ -39,9 +99,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const listKey = ["configs", id, "rule-groups"];
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    [DEFAULT_GROUP]: true,
-  });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroup, setRenameGroup] = useState<string | null>(null);
   const [addRuleGroup, setAddRuleGroup] = useState<RuleGroup | null>(null);
@@ -54,6 +112,10 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
   const groupsQuery = useQuery({
     queryKey: listKey,
     queryFn: ({ signal }) => listRuleGroups(id, signal),
+  });
+  const targetsQuery = useQuery({
+    queryKey: ["configs", id, "proxy-group-targets"],
+    queryFn: ({ signal }) => listProxyGroupTargets(id, signal),
   });
 
   const refresh = () =>
@@ -122,11 +184,11 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                 key={group.name}
                 className="rounded-md border bg-card transition-colors hover:border-foreground/20"
               >
-                <div className="flex items-center gap-2 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2 px-3 py-2">
                   <button
                     type="button"
                     onClick={() => toggle(group.name)}
-                    className="flex items-center gap-2 text-sm font-medium hover:text-foreground/80 cursor-pointer"
+                    className="flex min-w-0 items-center gap-2 text-sm font-medium hover:text-foreground/80 cursor-pointer"
                   >
                     <ChevronRight
                       className={cn(
@@ -135,25 +197,27 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                       )}
                       aria-hidden
                     />
-                    <span>{group.name}</span>
+                    <span className="truncate">{group.name}</span>
                     {isDefault && (
                       <Badge variant="secondary" className="text-[10px]">
                         default
                       </Badge>
                     )}
                   </button>
-                  <span className="text-xs text-muted-foreground ml-2">
+                  <span className="shrink-0 text-xs text-muted-foreground">
                     {t("groups.ruleCount", { count: group.rules.length })}
                   </span>
-                  <div className="ml-auto flex gap-1">
+                  <div className="ml-auto flex shrink-0 gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => setAddRuleGroup(group)}
-                      className="gap-1.5"
+                      className="gap-1.5 px-2 sm:px-3"
+                      title={t("groups.addRule")}
+                      aria-label={t("groups.addRule")}
                     >
                       <Plus className="h-4 w-4" aria-hidden />
-                      {t("groups.addRule")}
+                      <span className="hidden sm:inline">{t("groups.addRule")}</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -231,6 +295,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
         open={createGroupOpen}
         onOpenChange={setCreateGroupOpen}
         groupCount={groups.length}
+        targets={targetsQuery.data ?? []}
         onSuccess={refresh}
       />
       <RenameGroupDialog
@@ -245,6 +310,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
         open={addRuleGroup !== null}
         onOpenChange={(open) => !open && setAddRuleGroup(null)}
         group={addRuleGroup}
+        targets={targetsQuery.data ?? []}
         onSuccess={refresh}
       />
       <EditRuleDialog
@@ -263,6 +329,7 @@ interface CreateGroupDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   groupCount: number;
+  targets: string[];
   onSuccess: () => void;
 }
 
@@ -271,34 +338,32 @@ function CreateGroupDialog({
   open,
   onOpenChange,
   groupCount,
+  targets,
   onSuccess,
 }: CreateGroupDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [index, setIndex] = useState<number>(1);
-  const [rulesText, setRulesText] = useState("");
+  const [batch, setBatch] = useState<RuleBatchDraft>(() => emptyRuleBatch(targets));
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setName("");
     setIndex(Math.max(1, groupCount));
-    setRulesText("");
-  }, [open, groupCount]);
+    setBatch(emptyRuleBatch(targets));
+  }, [open, groupCount, targets]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const rules = rulesText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (!name.trim() || rules.length === 0) return;
+    const payload = ruleBatchPayload(batch);
+    if (!name.trim() || !payload) return;
     setSubmitting(true);
     try {
       await createRuleGroup(configId, {
         name: name.trim(),
         index,
-        rules,
+        ...payload,
       });
       onSuccess();
       onOpenChange(false);
@@ -339,18 +404,7 @@ function CreateGroupDialog({
               className="max-w-[140px]"
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="group-rules">{t("groups.rulesLabel")}</Label>
-            <Textarea
-              id="group-rules"
-              value={rulesText}
-              onChange={(event) => setRulesText(event.target.value)}
-              rows={6}
-              className="font-mono text-xs"
-              spellCheck={false}
-              required
-            />
-          </div>
+          <RuleBatchFields draft={batch} onChange={setBatch} targets={targets} />
           <DialogFooter>
             <Button
               type="button"
@@ -452,6 +506,7 @@ interface AddRuleDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   group: RuleGroup | null;
+  targets: string[];
   onSuccess: () => void;
 }
 
@@ -460,26 +515,28 @@ function AddRuleDialog({
   open,
   onOpenChange,
   group,
+  targets,
   onSuccess,
 }: AddRuleDialogProps) {
   const { t } = useTranslation();
-  const [rule, setRule] = useState("");
+  const [batch, setBatch] = useState<RuleBatchDraft>(() => emptyRuleBatch(targets));
   const [indexRaw, setIndexRaw] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setRule("");
+    setBatch(emptyRuleBatch(targets));
     setIndexRaw("");
-  }, [open]);
+  }, [open, targets]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!group || !rule.trim()) return;
+    const payload = ruleBatchPayload(batch);
+    if (!group || !payload) return;
     setSubmitting(true);
     try {
       await addRule(configId, group.name, {
-        rule: rule.trim(),
+        ...payload,
         index: indexRaw === "" ? undefined : Number(indexRaw),
       });
       onSuccess();
@@ -499,18 +556,11 @@ function AddRuleDialog({
             <DialogTitle>
               {t("groups.addRuleTitle", { group: group?.name ?? "" })}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("groups.addRuleHint")}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="rule-text">{t("groups.ruleLabel")}</Label>
-            <Input
-              id="rule-text"
-              value={rule}
-              onChange={(event) => setRule(event.target.value)}
-              required
-              autoFocus
-              className="font-mono text-xs"
-            />
-          </div>
+          <RuleBatchFields draft={batch} onChange={setBatch} targets={targets} />
           <div className="space-y-2">
             <Label htmlFor="rule-index">
               {t("groups.ruleIndexLabel")}
@@ -539,6 +589,112 @@ function AddRuleDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface RuleBatchFieldsProps {
+  draft: RuleBatchDraft;
+  onChange: (draft: RuleBatchDraft) => void;
+  targets: string[];
+}
+
+function RuleBatchFields({ draft, onChange, targets }: RuleBatchFieldsProps) {
+  const { t } = useTranslation();
+
+  return (
+    <Tabs
+      value={draft.mode}
+      onValueChange={(mode) =>
+        onChange({ ...draft, mode: mode as RuleBatchDraft["mode"] })
+      }
+    >
+      <TabsList>
+        <TabsTrigger value="yaml">{t("groups.batchYaml")}</TabsTrigger>
+        <TabsTrigger value="generate">{t("groups.batchGenerate")}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="yaml" className="space-y-2">
+        <Label htmlFor="batch-rules-yaml">{t("groups.rulesLabel")}</Label>
+        <Textarea
+          id="batch-rules-yaml"
+          value={draft.yaml}
+          onChange={(event) => onChange({ ...draft, yaml: event.target.value })}
+          rows={8}
+          className="font-mono text-xs"
+          placeholder={"rules:\n  - DOMAIN-SUFFIX,example.com,DIRECT"}
+          spellCheck={false}
+        />
+      </TabsContent>
+      <TabsContent value="generate" className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label>{t("groups.ruleTypeLabel")}</Label>
+            <Select
+              value={draft.ruleType}
+              onValueChange={(ruleType) =>
+                onChange({
+                  ...draft,
+                  ruleType: ruleType as RuleBatchDraft["ruleType"],
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RULE_TYPES.map((ruleType) => (
+                  <SelectItem key={ruleType} value={ruleType}>
+                    {ruleType}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>{t("groups.targetLabel")}</Label>
+            <Select
+              value={draft.target}
+              onValueChange={(target) => onChange({ ...draft, target })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {targets.map((target) => (
+                  <SelectItem key={target} value={target}>
+                    {target}
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_TARGET}>{t("groups.customTarget")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {draft.target === CUSTOM_TARGET && (
+          <div className="space-y-2">
+            <Label htmlFor="batch-custom-target">{t("groups.customTarget")}</Label>
+            <Input
+              id="batch-custom-target"
+              value={draft.customTarget}
+              onChange={(event) =>
+                onChange({ ...draft, customTarget: event.target.value })
+              }
+            />
+          </div>
+        )}
+        <div className="space-y-2">
+          <Label htmlFor="batch-rule-values">{t("groups.valuesLabel")}</Label>
+          <Textarea
+            id="batch-rule-values"
+            value={draft.values}
+            onChange={(event) => onChange({ ...draft, values: event.target.value })}
+            rows={7}
+            className="font-mono text-xs"
+            placeholder={"example.com\nexample.org"}
+            spellCheck={false}
+          />
+        </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 

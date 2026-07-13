@@ -10,6 +10,16 @@ import type {
 const groupBase = (id: string) =>
   `/configs/${encodeURIComponent(id)}/template/rule-groups`;
 
+export function listProxyGroupTargets(
+  id: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return apiRequest<string[]>(
+    `/configs/${encodeURIComponent(id)}/template/proxy-groups`,
+    { signal },
+  );
+}
+
 export function listRuleGroups(
   id: string,
   signal?: AbortSignal,

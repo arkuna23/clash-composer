@@ -142,24 +142,24 @@ func downloadCommandConfig(command string, dir string) ([]byte, error) {
 	return data, nil
 }
 
-func loadConfigurations(configs map[string]ConfigGroup, options MergeOptions) (map[string][]*config.RawConfig, error) {
+func loadConfigurations(configs ConfigGroups, options MergeOptions) ([][]*config.RawConfig, error) {
 	log.Printf("load configurations start: groups=%d", len(configs))
 	start := time.Now()
-	result := make(map[string][]*config.RawConfig, len(configs))
-	groupStarts := make(map[string]time.Time, len(configs))
+	result := make([][]*config.RawConfig, len(configs))
+	groupStarts := make([]time.Time, len(configs))
 	sem := make(chan struct{}, maxConcurrentSources)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error
 
-	for name, group := range configs {
+	for groupIndex, group := range configs {
 		groupStart := time.Now()
-		groupStarts[name] = groupStart
-		log.Printf("load configuration group start: group=%q sources=%d", name, len(group.Sources))
-		result[name] = make([]*config.RawConfig, len(group.Sources))
+		groupStarts[groupIndex] = groupStart
+		log.Printf("load configuration group start: group=%q sources=%d", group.Name, len(group.Sources))
+		result[groupIndex] = make([]*config.RawConfig, len(group.Sources))
 		for i, source := range group.Sources {
 			wg.Add(1)
-			go func(groupName string, sourceIndex int, source ConfigSource) {
+			go func(groupIndex, sourceIndex int, source ConfigSource) {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() {
@@ -167,16 +167,16 @@ func loadConfigurations(configs map[string]ConfigGroup, options MergeOptions) (m
 				}()
 
 				c, err := loadConfigSource(source, options)
-				mu.Lock()
-				defer mu.Unlock()
 				if err != nil {
+					mu.Lock()
 					if firstErr == nil {
 						firstErr = err
 					}
+					mu.Unlock()
 					return
 				}
-				result[groupName][sourceIndex] = c
-			}(name, i, source)
+				result[groupIndex][sourceIndex] = c
+			}(groupIndex, i, source)
 		}
 	}
 
@@ -185,8 +185,8 @@ func loadConfigurations(configs map[string]ConfigGroup, options MergeOptions) (m
 		return nil, firstErr
 	}
 
-	for name, cfg := range result {
-		log.Printf("load configuration group complete: group=%q elapsed=%s configs=%d", name, time.Since(groupStarts[name]), len(cfg))
+	for i, cfg := range result {
+		log.Printf("load configuration group complete: group=%q elapsed=%s configs=%d", configs[i].Name, time.Since(groupStarts[i]), len(cfg))
 	}
 	log.Printf("load configurations complete: groups=%d elapsed=%s", len(result), time.Since(start))
 	return result, nil

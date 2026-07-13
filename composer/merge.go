@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"bytes"
 	"clash-composer/config"
 	"encoding/json"
 	"fmt"
@@ -20,17 +21,85 @@ const (
 )
 
 type MergeRule struct {
-	Template             string                 `json:"template"`
-	Configurations       map[string]ConfigGroup `json:"configurations"` // proxy group name: config
-	RulesetStrategy      RulesetStrategy        `json:"rulesetStrategy"`
-	CacheDurationSeconds int64                  `json:"cacheDurationSeconds,omitempty"`
+	Template             string          `json:"template"`
+	Configurations       ConfigGroups    `json:"configurations"`
+	RulesetStrategy      RulesetStrategy `json:"rulesetStrategy"`
+	CacheDurationSeconds int64           `json:"cacheDurationSeconds,omitempty"`
 }
 
+type ConfigGroups []ConfigGroup
+
 type ConfigGroup struct {
+	Name          string         `json:"name"`
 	Sources       []ConfigSource `json:"sources,omitempty"`
 	IncludeDirect bool           `json:"includeDirect,omitempty"`
 	IncludeGroups []string       `json:"includeGroups,omitempty"`
 	EnableURLTest *bool          `json:"enableUrlTest,omitempty"`
+}
+
+func (g *ConfigGroups) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		*g = nil
+		return nil
+	}
+
+	switch data[0] {
+	case '[':
+		type configGroups ConfigGroups
+		var next configGroups
+		if err := json.Unmarshal(data, &next); err != nil {
+			return err
+		}
+		*g = ConfigGroups(next)
+		return nil
+	case '{':
+		return g.unmarshalLegacyObject(data)
+	default:
+		return fmt.Errorf("configurations must be an array or object")
+	}
+}
+
+func (g ConfigGroups) MarshalJSON() ([]byte, error) {
+	if g == nil {
+		return []byte("[]"), nil
+	}
+	type configGroups ConfigGroups
+	return json.Marshal(configGroups(g))
+}
+
+func (g *ConfigGroups) unmarshalLegacyObject(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return fmt.Errorf("configurations must be an object")
+	}
+
+	next := ConfigGroups{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("configuration group name must be a string")
+		}
+		var group ConfigGroup
+		if err := decoder.Decode(&group); err != nil {
+			return err
+		}
+		group.Name = name
+		next = append(next, group)
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	*g = next
+	return nil
 }
 
 func (g *ConfigGroup) UnmarshalJSON(data []byte) error {
@@ -218,9 +287,10 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 		}
 	}
 
-	for name, cfg := range configurations {
-		if err := appendProxyGroup(newConfig, name, rule.Configurations[name], cfg); err != nil {
-			log.Printf("append proxy group failed: group=%q err=%v", name, err)
+	for i, cfg := range configurations {
+		group := rule.Configurations[i]
+		if err := appendProxyGroup(newConfig, group.Name, group, cfg); err != nil {
+			log.Printf("append proxy group failed: group=%q err=%v", group.Name, err)
 			return nil, err
 		}
 	}
@@ -229,13 +299,34 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 	return newConfig, nil
 }
 
-func validateGroupIncludes(groups map[string]ConfigGroup, templateGroups []map[string]any) error {
+func validateConfigGroups(groups ConfigGroups) error {
+	seen := map[string]bool{}
+	for _, group := range groups {
+		name := strings.TrimSpace(group.Name)
+		if name == "" {
+			return fmt.Errorf("configuration group name is required")
+		}
+		if name != group.Name {
+			return fmt.Errorf("configuration group name %q has surrounding whitespace", group.Name)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate configuration group name %q", name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func validateGroupIncludes(groups ConfigGroups, templateGroups []map[string]any) error {
+	if err := validateConfigGroups(groups); err != nil {
+		return err
+	}
 	available := map[string]bool{
 		"DIRECT": true,
 		"REJECT": true,
 	}
-	for name := range groups {
-		available[name] = true
+	for _, group := range groups {
+		available[group.Name] = true
 	}
 	for _, group := range templateGroups {
 		if name, ok := group["name"].(string); ok && strings.TrimSpace(name) != "" {
@@ -243,7 +334,8 @@ func validateGroupIncludes(groups map[string]ConfigGroup, templateGroups []map[s
 		}
 	}
 
-	for groupName, group := range groups {
+	for _, group := range groups {
+		groupName := group.Name
 		for _, include := range group.IncludeGroups {
 			include = strings.TrimSpace(include)
 			if include == "" {

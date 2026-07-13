@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"clash-composer/config"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,9 +16,10 @@ type RuleGroup struct {
 }
 
 type createRuleGroupRequest struct {
-	Name  string   `json:"name"`
-	Index *int     `json:"index"`
-	Rules []string `json:"rules"`
+	Name      string   `json:"name"`
+	Index     *int     `json:"index"`
+	Rules     []string `json:"rules,omitempty"`
+	RulesYAML string   `json:"rulesYaml,omitempty"`
 }
 
 type updateRuleGroupRequest struct {
@@ -28,6 +30,65 @@ type updateRuleGroupRequest struct {
 type updateRuleRequest struct {
 	Rule  string `json:"rule"`
 	Index *int   `json:"index,omitempty"`
+}
+
+type addRulesRequest struct {
+	Rule      string   `json:"rule,omitempty"`
+	Rules     []string `json:"rules,omitempty"`
+	RulesYAML string   `json:"rulesYaml,omitempty"`
+	Index     *int     `json:"index,omitempty"`
+}
+
+func (api *httpAPI) handleProxyGroupTargets(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, methodNotAllowed("method not allowed"))
+		return
+	}
+	rule, apiErr := api.readMergeRule(id)
+	if apiErr != nil {
+		writeAPIError(w, apiErr)
+		return
+	}
+	path, err := api.resolveExistingManagedPath(rule.Template)
+	if err != nil {
+		writeAPIError(w, badRequest(fmt.Sprintf("template: %v", err)))
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		writeAPIError(w, internalError("read template", err))
+		return
+	}
+	cfg, err := config.UnmarshalRawConfig(data)
+	if err != nil {
+		writeAPIError(w, badRequest(fmt.Sprintf("template: %v", err)))
+		return
+	}
+
+	targets := []string{}
+	seen := map[string]bool{}
+	appendTarget := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		targets = append(targets, name)
+	}
+	appendTarget("DIRECT")
+	appendTarget("REJECT")
+	for _, group := range rule.Configurations {
+		appendTarget(group.Name)
+		if group.urlTestEnabled() {
+			appendTarget(group.Name + "-UrlTest")
+		}
+	}
+	for _, group := range cfg.ProxyGroup {
+		if name, ok := group["name"].(string); ok {
+			appendTarget(name)
+		}
+	}
+	writeJSON(w, http.StatusOK, targets)
 }
 
 func (api *httpAPI) handleRuleProviders(w http.ResponseWriter, r *http.Request, id string, rest []string) {
@@ -163,16 +224,13 @@ func (api *httpAPI) handleCreateRuleGroup(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, badRequest("index is required"))
 		return
 	}
-	if len(req.Rules) == 0 {
-		writeAPIError(w, badRequest("at least one rule is required"))
-		return
-	}
-	if err := validateRules(req.Rules); err != nil {
+	rules, err := resolveRuleBatch("", req.Rules, req.RulesYAML)
+	if err != nil {
 		writeAPIError(w, badRequest(err.Error()))
 		return
 	}
 
-	group := RuleGroup{Name: req.Name, Rules: req.Rules}
+	group := RuleGroup{Name: req.Name, Rules: rules}
 	if apiErr := createRuleGroup(path, *req.Index, group); apiErr != nil {
 		writeAPIError(w, apiErr)
 		return
@@ -189,7 +247,6 @@ func (api *httpAPI) handleRuleGroup(w http.ResponseWriter, r *http.Request, id, 
 			writeAPIError(w, apiErr)
 			return
 		}
-		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusOK, group)
 	case http.MethodPut:
 		var req updateRuleGroupRequest
@@ -202,6 +259,7 @@ func (api *httpAPI) handleRuleGroup(w http.ResponseWriter, r *http.Request, id, 
 			writeAPIError(w, apiErr)
 			return
 		}
+		api.deleteSubscriptionCache(id)
 		writeJSON(w, http.StatusOK, group)
 	case http.MethodDelete:
 		if apiErr := deleteRuleGroup(path, name); apiErr != nil {
@@ -222,16 +280,17 @@ func (api *httpAPI) handleRuleGroupRules(w http.ResponseWriter, r *http.Request,
 			writeAPIError(w, methodNotAllowed("method not allowed"))
 			return
 		}
-		var req updateRuleRequest
+		var req addRulesRequest
 		if err := decodeJSON(r, &req); err != nil {
 			writeAPIError(w, badRequest(err.Error()))
 			return
 		}
-		if err := validateRuleString(req.Rule); err != nil {
+		rules, err := resolveRuleBatch(req.Rule, req.Rules, req.RulesYAML)
+		if err != nil {
 			writeAPIError(w, badRequest(err.Error()))
 			return
 		}
-		group, apiErr := addRuleToGroup(path, name, req)
+		group, apiErr := addRulesToGroup(path, name, rules, req.Index)
 		if apiErr != nil {
 			writeAPIError(w, apiErr)
 			return
@@ -494,6 +553,11 @@ func updateRuleGroup(path, name string, req updateRuleGroupRequest) (RuleGroup, 
 			return RuleGroup{}, conflict("rule group already exists")
 		}
 		groups[index].Name = *req.Name
+		for groupIndex := range groups {
+			for ruleIndex, rule := range groups[groupIndex].Rules {
+				groups[groupIndex].Rules[ruleIndex] = replaceRulePolicyTarget(rule, name, *req.Name)
+			}
+		}
 	}
 	if req.Rules != nil {
 		if err := validateRules(*req.Rules); err != nil {
@@ -537,27 +601,140 @@ func deleteRuleGroup(path, name string) *apiError {
 	return nil
 }
 
-func addRuleToGroup(path, name string, req updateRuleRequest) (RuleGroup, *apiError) {
+func addRulesToGroup(path, name string, rules []string, requestedIndex *int) (RuleGroup, *apiError) {
 	doc, groups, index, apiErr := loadRuleGroupForEdit(path, name)
 	if apiErr != nil {
 		return RuleGroup{}, apiErr
 	}
 
 	insertIndex := len(groups[index].Rules)
-	if req.Index != nil {
-		insertIndex = *req.Index
+	if requestedIndex != nil {
+		insertIndex = *requestedIndex
 	}
 	if insertIndex < 0 || insertIndex > len(groups[index].Rules) {
 		return RuleGroup{}, badRequest("invalid index")
 	}
-	groups[index].Rules = append(groups[index].Rules, "")
-	copy(groups[index].Rules[insertIndex+1:], groups[index].Rules[insertIndex:])
-	groups[index].Rules[insertIndex] = req.Rule
+	next := make([]string, 0, len(groups[index].Rules)+len(rules))
+	next = append(next, groups[index].Rules[:insertIndex]...)
+	next = append(next, rules...)
+	next = append(next, groups[index].Rules[insertIndex:]...)
+	groups[index].Rules = next
 
 	if apiErr := saveRuleGroups(path, doc, groups); apiErr != nil {
 		return RuleGroup{}, apiErr
 	}
 	return groups[index], nil
+}
+
+func replaceRulePolicyTarget(rule, oldName, newName string) string {
+	parts := strings.Split(rule, ",")
+	if len(parts) < 2 {
+		return rule
+	}
+	targetIndex := len(parts) - 1
+	if strings.EqualFold(strings.TrimSpace(parts[targetIndex]), "no-resolve") {
+		targetIndex--
+	}
+	if targetIndex <= 0 || strings.TrimSpace(parts[targetIndex]) != oldName {
+		return rule
+	}
+
+	raw := parts[targetIndex]
+	left := raw[:len(raw)-len(strings.TrimLeft(raw, " \t"))]
+	right := raw[len(strings.TrimRight(raw, " \t")):]
+	parts[targetIndex] = left + newName + right
+	return strings.Join(parts, ",")
+}
+
+func resolveRuleBatch(rule string, rules []string, rulesYAML string) ([]string, error) {
+	selected := 0
+	if strings.TrimSpace(rule) != "" {
+		selected++
+	}
+	if len(rules) > 0 {
+		selected++
+	}
+	if strings.TrimSpace(rulesYAML) != "" {
+		selected++
+	}
+	if selected == 0 {
+		return nil, fmt.Errorf("at least one rule is required")
+	}
+	if selected > 1 {
+		return nil, fmt.Errorf("set exactly one of rule, rules, or rulesYaml")
+	}
+
+	var next []string
+	switch {
+	case strings.TrimSpace(rule) != "":
+		next = []string{strings.TrimSpace(rule)}
+	case len(rules) > 0:
+		next = append([]string(nil), rules...)
+	default:
+		parsed, err := parseRuleList(rulesYAML)
+		if err != nil {
+			return nil, err
+		}
+		next = parsed
+	}
+	for i := range next {
+		next[i] = strings.TrimSpace(next[i])
+	}
+	if err := validateRules(next); err != nil {
+		return nil, err
+	}
+	return next, nil
+}
+
+func parseRuleList(input string) ([]string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, fmt.Errorf("at least one rule is required")
+	}
+
+	doc := &yaml.Node{}
+	yamlErr := yaml.Unmarshal([]byte(input), doc)
+	if yamlErr == nil && len(doc.Content) > 0 {
+		root := doc.Content[0]
+		if root.Kind == yaml.MappingNode {
+			root = mappingValue(root, "rules")
+			if root == nil {
+				return nil, fmt.Errorf("YAML mapping must contain rules")
+			}
+		}
+		if root.Kind == yaml.SequenceNode {
+			if len(root.Content) == 0 {
+				return nil, fmt.Errorf("at least one rule is required")
+			}
+			rules := make([]string, 0, len(root.Content))
+			for _, node := range root.Content {
+				if node.Kind != yaml.ScalarNode {
+					return nil, fmt.Errorf("rules must be a YAML string list")
+				}
+				rules = append(rules, node.Value)
+			}
+			return rules, nil
+		}
+	}
+	if yamlErr != nil && (strings.HasPrefix(input, "-") || strings.HasPrefix(input, "rules:") || strings.Contains(input, "\nrules:")) {
+		return nil, fmt.Errorf("invalid YAML rule list: %w", yamlErr)
+	}
+
+	lines := []string{}
+	for _, line := range strings.Split(input, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(line, ",") {
+			return nil, fmt.Errorf("invalid rule list")
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("at least one rule is required")
+	}
+	return lines, nil
 }
 
 func getRuleFromGroup(path, name string, ruleIndex int) (string, *apiError) {

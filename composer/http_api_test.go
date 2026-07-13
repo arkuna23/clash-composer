@@ -38,8 +38,9 @@ proxies:
 	api := newTestAPI(t, dir)
 	rule := MergeRule{
 		Template: "template.yaml",
-		Configurations: map[string]ConfigGroup{
-			"Auto": {
+		Configurations: ConfigGroups{
+			{
+				Name:          "Auto",
 				Sources:       []ConfigSource{{Path: "proxy.yaml"}},
 				IncludeDirect: true,
 			},
@@ -101,8 +102,8 @@ proxies:
 	writeMergeRule(t, dir, "demo", MergeRule{
 		Template:             "template.yaml",
 		CacheDurationSeconds: 3600,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {Sources: []ConfigSource{{Path: "proxy.yaml"}}},
+		Configurations: ConfigGroups{
+			{Name: "Auto", Sources: []ConfigSource{{Path: "proxy.yaml"}}},
 		},
 	})
 	api := newTestAPI(t, dir)
@@ -147,8 +148,8 @@ proxies:
 	writeMergeRule(t, dir, "demo", MergeRule{
 		Template:             "template.yaml",
 		CacheDurationSeconds: 1,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {Sources: []ConfigSource{{Path: "proxy.yaml"}}},
+		Configurations: ConfigGroups{
+			{Name: "Auto", Sources: []ConfigSource{{Path: "proxy.yaml"}}},
 		},
 	})
 	api := newTestAPI(t, dir)
@@ -191,8 +192,8 @@ proxies:
 	rule := MergeRule{
 		Template:             "template.yaml",
 		CacheDurationSeconds: 3600,
-		Configurations: map[string]ConfigGroup{
-			"Auto": {Sources: []ConfigSource{{Path: "proxy.yaml"}}},
+		Configurations: ConfigGroups{
+			{Name: "Auto", Sources: []ConfigSource{{Path: "proxy.yaml"}}},
 		},
 	}
 	writeMergeRule(t, dir, "demo", rule)
@@ -295,7 +296,7 @@ func TestHTTPAPINormalizesLegacyConfigurationGroups(t *testing.T) {
 	api := newTestAPI(t, dir)
 	resp := performRequest(t, api, http.MethodGet, "/api/configs/demo", nil, true)
 	assertStatus(t, resp, http.StatusOK)
-	if !strings.Contains(resp.Body.String(), `"sources":[{"path":"proxy.yaml"`) {
+	if !strings.Contains(resp.Body.String(), `"configurations":[{"name":"Legacy","sources":[{"path":"proxy.yaml"`) {
 		t.Fatalf("legacy group was not normalized: %s", resp.Body.String())
 	}
 }
@@ -307,8 +308,8 @@ func TestHTTPAPIRejectsInvalidGroupIncludes(t *testing.T) {
 	api := newTestAPI(t, dir)
 	rule := MergeRule{
 		Template: "template.yaml",
-		Configurations: map[string]ConfigGroup{
-			"Auto": {IncludeGroups: []string{"Missing"}},
+		Configurations: ConfigGroups{
+			{Name: "Auto", IncludeGroups: []string{"Missing"}},
 		},
 	}
 
@@ -540,6 +541,149 @@ rules:
 	text := string(data)
 	if !strings.Contains(text, "# search") || strings.Contains(text, "# steam") {
 		t.Fatalf("template comments not updated as expected:\n%s", text)
+	}
+}
+
+func TestHTTPAPIRuleBatchAndRenameReferences(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", `
+rules:
+  - DOMAIN-SUFFIX,default.example,Target
+
+  # Target
+  - IP-CIDR,192.0.2.0/24,Target,no-resolve
+
+  # unrelated
+  - RULE-SET,Target,DIRECT
+`)
+	writeMergeRule(t, dir, "demo", MergeRule{Template: "template.yaml"})
+	api := newTestAPI(t, dir)
+
+	resp := performJSONRequest(t, api, http.MethodPost, "/api/configs/demo/template/rule-groups/Target/rules", addRulesRequest{
+		RulesYAML: `rules:
+  - DOMAIN-SUFFIX,one.example,Target
+  - DOMAIN-SUFFIX,two.example,Target
+`,
+		Index: intPtr(1),
+	}, true)
+	assertStatus(t, resp, http.StatusCreated)
+	var group RuleGroup
+	decodeResponse(t, resp, &group)
+	wantRules := []string{
+		"IP-CIDR,192.0.2.0/24,Target,no-resolve",
+		"DOMAIN-SUFFIX,one.example,Target",
+		"DOMAIN-SUFFIX,two.example,Target",
+	}
+	if strings.Join(group.Rules, "\n") != strings.Join(wantRules, "\n") {
+		t.Fatalf("batch rules = %#v, want %#v", group.Rules, wantRules)
+	}
+
+	resp = performJSONRequest(t, api, http.MethodPut, "/api/configs/demo/template/rule-groups/Target", updateRuleGroupRequest{
+		Name: stringPtr("Renamed"),
+	}, true)
+	assertStatus(t, resp, http.StatusOK)
+
+	data, err := os.ReadFile(filepath.Join(dir, "template.yaml"))
+	if err != nil {
+		t.Fatalf("read renamed template: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"# Renamed",
+		"DOMAIN-SUFFIX,default.example,Renamed",
+		"IP-CIDR,192.0.2.0/24,Renamed,no-resolve",
+		"DOMAIN-SUFFIX,one.example,Renamed",
+		"DOMAIN-SUFFIX,two.example,Renamed",
+		"RULE-SET,Target,DIRECT",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("renamed template missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestHTTPAPIProxyGroupTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", `
+proxy-groups:
+  - name: Existing
+    type: select
+    proxies:
+      - DIRECT
+rules: []
+`)
+	disabled := false
+	writeMergeRule(t, dir, "demo", MergeRule{
+		Template: "template.yaml",
+		Configurations: ConfigGroups{
+			{Name: "Auto"},
+			{Name: "Manual", EnableURLTest: &disabled},
+		},
+	})
+	api := newTestAPI(t, dir)
+
+	resp := performRequest(t, api, http.MethodGet, "/api/configs/demo/template/proxy-groups", nil, true)
+	assertStatus(t, resp, http.StatusOK)
+	var targets []string
+	decodeResponse(t, resp, &targets)
+	want := []string{"DIRECT", "REJECT", "Auto", "Auto-UrlTest", "Manual", "Existing"}
+	if strings.Join(targets, ",") != strings.Join(want, ",") {
+		t.Fatalf("targets = %#v, want %#v", targets, want)
+	}
+}
+
+func TestParseRuleList(t *testing.T) {
+	testCases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name: "yaml list",
+			input: `
+- DOMAIN-SUFFIX,one.example,DIRECT
+- DOMAIN-SUFFIX,two.example,DIRECT
+`,
+			want: []string{"DOMAIN-SUFFIX,one.example,DIRECT", "DOMAIN-SUFFIX,two.example,DIRECT"},
+		},
+		{
+			name: "subscription mapping",
+			input: `
+mixed-port: 7890
+rules:
+  - DOMAIN,one.example,DIRECT
+  - MATCH,REJECT
+`,
+			want: []string{"DOMAIN,one.example,DIRECT", "MATCH,REJECT"},
+		},
+		{
+			name:  "plain lines",
+			input: "DOMAIN,one.example,DIRECT\nMATCH,REJECT",
+			want:  []string{"DOMAIN,one.example,DIRECT", "MATCH,REJECT"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseRuleList(tc.input)
+			if err != nil {
+				t.Fatalf("parse rule list: %v", err)
+			}
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("rules = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+
+	invalidCases := []string{
+		"rules: [",
+		"[]",
+		"rules: []",
+	}
+	for _, input := range invalidCases {
+		if _, err := parseRuleList(input); err == nil {
+			t.Fatalf("parseRuleList(%q) unexpectedly succeeded", input)
+		}
 	}
 }
 

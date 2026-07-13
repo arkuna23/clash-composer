@@ -68,27 +68,29 @@ merged.yaml
 ```json
 {
   "template": "example/template.yaml",
-  "configurations": {
-    "High": {
+  "configurations": [
+    {
+      "name": "High",
       "sources": [
         { "path": "example/high.yaml" }
       ],
       "includeDirect": true,
       "includeGroups": ["Common"]
     },
-    "Common": {
+    {
+      "name": "Common",
       "sources": [
         { "path": "example/common.yaml" }
       ],
       "includeDirect": true
     }
-  },
+  ],
   "cacheDurationSeconds": 0,
   "rulesetStrategy": "url-ruleset"
 }
 ```
 
-每个配置分组默认会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`enableUrlTest` 设为 `false` 时只生成 `<分组名>` select，节点、`DIRECT` 和 `includeGroups` 会直接加入该 select。`includeDirect` 会把 `DIRECT` 插入到 select 分组中，`includeGroups` 可以插入其他已有分组名或其他配置分组名用于分流。
+`configurations` 是有序数组，数组顺序决定生成的代理分组顺序。每个配置分组默认会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`enableUrlTest` 设为 `false` 时只生成 `<分组名>` select，节点、`DIRECT` 和 `includeGroups` 会直接加入该 select。`includeDirect` 会把 `DIRECT` 插入到 select 分组中，`includeGroups` 可以插入其他已有分组名或其他配置分组名用于分流。
 
 `cacheDurationSeconds` 控制订阅缓存时长，单位秒；`0` 或缺省表示每次下载订阅时实时生成。
 
