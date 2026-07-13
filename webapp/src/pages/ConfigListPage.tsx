@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, FilePlus2, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormError } from "@/components/ui/form-error";
 import {
   Select,
   SelectContent,
@@ -83,7 +84,9 @@ export function ConfigListPage() {
       <Card>
         <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-xl">{t("configs.title")}</CardTitle>
+            <CardTitle as="h1" className="text-xl">
+              {t("configs.title")}
+            </CardTitle>
             <CardDescription>{t("app.subtitle")}</CardDescription>
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -103,11 +106,15 @@ export function ConfigListPage() {
         </CardHeader>
         <CardContent>
           {listQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-muted-foreground"
+            >
               {t("common.loading")}
             </p>
           ) : listQuery.isError ? (
-            <p className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive">
               {(listQuery.error as Error).message}
             </p>
           ) : !listQuery.data || listQuery.data.configs.length === 0 ? (
@@ -127,25 +134,22 @@ export function ConfigListPage() {
               </TableHeader>
               <TableBody>
                 {listQuery.data.configs.map((id) => (
-                  <TableRow
-                    key={id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/configs/${encodeURIComponent(id)}`)}
-                  >
-                    <TableCell className="font-medium">{id}</TableCell>
-                    <TableCell className="text-right pr-3">
-                      <div
-                        className="flex justify-end gap-2"
-                        onClick={(event) => event.stopPropagation()}
+                  <TableRow key={id}>
+                    <TableCell className="max-w-0 font-medium">
+                      <Link
+                        to={`/configs/${encodeURIComponent(id)}`}
+                        className="block truncate underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        translate="no"
                       >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            navigate(`/configs/${encodeURIComponent(id)}`)
-                          }
-                        >
-                          {t("configs.openDetail")}
+                        {id}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-right pr-3">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link to={`/configs/${encodeURIComponent(id)}`}>
+                            {t("configs.openDetail")}
+                          </Link>
                         </Button>
                         <Button
                           variant="ghost"
@@ -190,16 +194,19 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
   const [path, setPath] = useState("");
   const [overwrite, setOverwrite] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   const reset = () => {
     setFile(null);
     setPath("");
     setOverwrite(false);
+    setError("");
   };
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const nextFile = event.target.files?.[0] ?? null;
     setFile(nextFile);
+    setError("");
     if (nextFile && path.trim() === "") {
       setPath(nextFile.name);
     }
@@ -208,8 +215,10 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!file || !path.trim()) {
+      setError(t("files.required"));
       return;
     }
+    setError("");
     setSubmitting(true);
     try {
       const result = await uploadFile(path.trim(), file, overwrite);
@@ -217,7 +226,7 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
       reset();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
@@ -243,9 +252,12 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
             <Label htmlFor="upload-file">{t("files.fileLabel")}</Label>
             <Input
               id="upload-file"
+              name="file"
               type="file"
               accept=".yaml,.yml"
               onChange={onFileChange}
+              aria-describedby={error ? "upload-error" : undefined}
+              aria-invalid={!!error}
               required
             />
           </div>
@@ -253,9 +265,17 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
             <Label htmlFor="upload-path">{t("files.pathLabel")}</Label>
             <Input
               id="upload-path"
+              name="path"
               value={path}
-              onChange={(event) => setPath(event.target.value)}
+              onChange={(event) => {
+                setPath(event.target.value);
+                setError("");
+              }}
               placeholder={t("files.pathPlaceholder")}
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={error ? "upload-error" : undefined}
+              aria-invalid={!!error}
               required
             />
             <p className="text-xs text-muted-foreground">
@@ -265,12 +285,14 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
+              name="overwrite"
               checked={overwrite}
               onChange={(event) => setOverwrite(event.target.checked)}
               className="h-4 w-4 shrink-0 rounded border-input"
             />
             <span>{t("files.overwrite")}</span>
           </label>
+          <FormError id="upload-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -279,7 +301,7 @@ function UploadFileDialog({ open, onOpenChange }: UploadFileDialogProps) {
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting || !file}>
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? t("common.loading") : t("files.upload")}
             </Button>
           </DialogFooter>
@@ -305,12 +327,15 @@ function CreateConfigDialog({
   const [template, setTemplate] = useState("template.yaml");
   const [strategy, setStrategy] = useState<RulesetStrategy>("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!id.trim() || !template.trim()) {
+      setError(t("configs.requiredFields"));
       return;
     }
+    setError("");
     setSubmitting(true);
     try {
       const rule: MergeRule = {
@@ -326,14 +351,20 @@ function CreateConfigDialog({
       setTemplate("template.yaml");
       setStrategy("");
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen);
+        if (!nextOpen) setError("");
+      }}
+    >
       <DialogContent>
         <form onSubmit={onSubmit} className="space-y-4">
           <DialogHeader>
@@ -346,10 +377,17 @@ function CreateConfigDialog({
             <Label htmlFor="config-id">{t("configs.idLabel")}</Label>
             <Input
               id="config-id"
+              name="id"
               value={id}
-              onChange={(event) => setId(event.target.value)}
+              onChange={(event) => {
+                setId(event.target.value);
+                setError("");
+              }}
               placeholder={t("configs.idPlaceholder")}
-              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={error ? "create-config-error" : undefined}
+              aria-invalid={!!error}
               required
             />
           </div>
@@ -359,23 +397,34 @@ function CreateConfigDialog({
             </Label>
             <Input
               id="config-template"
+              name="template"
               value={template}
-              onChange={(event) => setTemplate(event.target.value)}
+              onChange={(event) => {
+                setTemplate(event.target.value);
+                setError("");
+              }}
               placeholder={t("configs.templatePlaceholder")}
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={error ? "create-config-error" : undefined}
+              aria-invalid={!!error}
               required
             />
           </div>
           <div className="space-y-2">
-            <Label>{t("configs.rulesetStrategyLabel")}</Label>
+            <Label htmlFor="config-ruleset-strategy">
+              {t("configs.rulesetStrategyLabel")}
+            </Label>
             <Select
               value={strategy === "" ? "__empty" : strategy}
-              onValueChange={(value) =>
+              onValueChange={(value) => {
                 setStrategy(
                   value === "__empty" ? "" : (value as RulesetStrategy),
-                )
-              }
+                );
+                setError("");
+              }}
             >
-              <SelectTrigger>
+              <SelectTrigger id="config-ruleset-strategy" name="rulesetStrategy">
                 <SelectValue placeholder="—" />
               </SelectTrigger>
               <SelectContent>
@@ -393,6 +442,7 @@ function CreateConfigDialog({
               {t("configs.rulesetStrategyHelp")}
             </p>
           </div>
+          <FormError id="create-config-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -401,7 +451,7 @@ function CreateConfigDialog({
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? t("common.loading") : t("common.create")}
             </Button>
           </DialogFooter>

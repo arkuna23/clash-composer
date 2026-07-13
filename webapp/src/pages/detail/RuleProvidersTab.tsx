@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormError } from "@/components/ui/form-error";
 import {
   Table,
   TableBody,
@@ -77,7 +78,17 @@ export function RuleProvidersTab({ id }: RuleProvidersTabProps) {
         </Button>
       </div>
       {listQuery.isLoading ? (
-        <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-sm text-muted-foreground"
+        >
+          {t("common.loading")}
+        </p>
+      ) : listQuery.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {(listQuery.error as Error).message}
+        </p>
       ) : providers.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("providers.empty")}</p>
       ) : (
@@ -98,11 +109,18 @@ export function RuleProvidersTab({ id }: RuleProvidersTabProps) {
               const record = body as Record<string, unknown>;
               return (
                 <TableRow key={name}>
-                  <TableCell className="font-medium">{name}</TableCell>
-                  <TableCell>{String(record.type ?? "")}</TableCell>
-                  <TableCell>{String(record.behavior ?? "")}</TableCell>
+                  <TableCell className="font-medium" translate="no">
+                    {name}
+                  </TableCell>
+                  <TableCell translate="no">{String(record.type ?? "")}</TableCell>
+                  <TableCell translate="no">
+                    {String(record.behavior ?? "")}
+                  </TableCell>
                   <TableCell className="max-w-[280px] truncate">
-                    <span className="text-xs text-muted-foreground">
+                    <span
+                      className="text-xs text-muted-foreground"
+                      translate="no"
+                    >
                       {String(record.url ?? record.path ?? "")}
                     </span>
                   </TableCell>
@@ -192,6 +210,7 @@ function ProviderDialog({
     initialBody ? JSON.stringify(initialBody, null, 2) : SAMPLE_BODY,
   );
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -199,11 +218,16 @@ function ProviderDialog({
     setBodyText(
       initialBody ? JSON.stringify(initialBody, null, 2) : SAMPLE_BODY,
     );
+    setError("");
   }, [open, initialName, initialBody]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setError(t("providers.nameRequired"));
+      return;
+    }
+    setError("");
     let parsed: RuleProvider;
     try {
       parsed = JSON.parse(bodyText) as RuleProvider;
@@ -211,9 +235,7 @@ function ProviderDialog({
         throw new Error(t("providers.invalidJson"));
       }
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t("providers.invalidJson"),
-      );
+      setError(error instanceof Error ? error.message : t("providers.invalidJson"));
       return;
     }
     setSubmitting(true);
@@ -224,10 +246,11 @@ function ProviderDialog({
         await updateRuleProvider(configId, name.trim(), parsed);
       }
       toast.success(t("providers.saved"));
+      setError("");
       onSuccess();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
@@ -247,9 +270,15 @@ function ProviderDialog({
             <Label htmlFor="provider-name">{t("providers.nameLabel")}</Label>
             <Input
               id="provider-name"
+              name="providerName"
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError("");
+              }}
               placeholder={t("providers.namePlaceholder")}
+              autoComplete="off"
+              spellCheck={false}
               disabled={mode === "edit"}
               required
             />
@@ -258,14 +287,20 @@ function ProviderDialog({
             <Label htmlFor="provider-body">{t("providers.bodyLabel")}</Label>
             <Textarea
               id="provider-body"
+              name="providerBody"
               value={bodyText}
-              onChange={(event) => setBodyText(event.target.value)}
+              onChange={(event) => {
+                setBodyText(event.target.value);
+                setError("");
+              }}
               rows={12}
               className="font-mono text-xs"
+              autoComplete="off"
               spellCheck={false}
               required
             />
           </div>
+          <FormError id="provider-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -274,7 +309,7 @@ function ProviderDialog({
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? t("common.loading") : t("common.save")}
             </Button>
           </DialogFooter>

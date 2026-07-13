@@ -27,21 +27,20 @@ export function SubscriptionTab({ id }: SubscriptionTabProps) {
     }
   };
 
-  const onDownload = () => {
-    if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
   return (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="subscription-url">URL</Label>
         <Input
           id="subscription-url"
+          name="subscriptionUrl"
+          type="url"
           readOnly
           value={url}
           onFocus={(event) => event.currentTarget.select()}
           className="font-mono text-xs"
+          spellCheck={false}
+          translate="no"
         />
         <p className="text-xs text-muted-foreground">
           {t("subscription.copyHint")}
@@ -52,15 +51,19 @@ export function SubscriptionTab({ id }: SubscriptionTabProps) {
           <Copy className="h-4 w-4" aria-hidden />
           {t("subscription.copyButton")}
         </Button>
-        <Button
-          onClick={onDownload}
-          variant="outline"
-          className="gap-1.5"
-          disabled={!url}
-        >
-          <Download className="h-4 w-4" aria-hidden />
-          {t("subscription.downloadButton")}
-        </Button>
+        {url ? (
+          <Button variant="outline" className="gap-1.5" asChild>
+            <a href={url} target="_blank" rel="noopener noreferrer">
+              <Download className="h-4 w-4" aria-hidden />
+              {t("subscription.downloadButton")}
+            </a>
+          </Button>
+        ) : (
+          <Button variant="outline" className="gap-1.5" disabled>
+            <Download className="h-4 w-4" aria-hidden />
+            {t("subscription.downloadButton")}
+          </Button>
+        )}
       </div>
     </div>
   );

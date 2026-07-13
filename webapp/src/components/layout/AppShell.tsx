@@ -31,14 +31,25 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      <a
+        href="#main-content"
+        className="fixed left-4 top-4 z-[60] -translate-y-20 rounded-md bg-background px-3 py-2 text-sm font-medium shadow transition-transform focus-visible:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+      >
+        {t("common.skipToContent")}
+      </a>
       <header className="border-b bg-background/80 backdrop-blur sticky top-0 z-30">
         <div className="container flex h-14 items-center justify-between gap-4">
           <Link to="/configs" className="flex items-center gap-2">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground text-xs font-semibold">
+            <span
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground text-xs font-semibold"
+              translate="no"
+            >
               CC
             </span>
             <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold">{t("app.title")}</span>
+              <span className="text-sm font-semibold" translate="no">
+                {t("app.title")}
+              </span>
               <span className="text-xs text-muted-foreground hidden sm:block">
                 {t("app.subtitle")}
               </span>
@@ -52,7 +63,13 @@ export function AppShell() {
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  aria-label={`${t("common.language")}: ${i18n.resolvedLanguage}`}
+                  title={t("common.language")}
+                >
                   <Globe className="h-4 w-4" aria-hidden />
                   <span className="hidden sm:inline">
                     {t("common.language")}
@@ -78,6 +95,8 @@ export function AppShell() {
               size="sm"
               onClick={onLogout}
               className="gap-1.5"
+              aria-label={t("common.logout")}
+              title={t("common.logout")}
             >
               <LogOut className="h-4 w-4" aria-hidden />
               <span className="hidden sm:inline">{t("common.logout")}</span>
@@ -85,7 +104,7 @@ export function AppShell() {
           </div>
         </div>
       </header>
-      <main className="container flex-1 py-6">
+      <main id="main-content" className="container flex-1 py-6" tabIndex={-1}>
         <PageTransition>
           <Outlet />
         </PageTransition>

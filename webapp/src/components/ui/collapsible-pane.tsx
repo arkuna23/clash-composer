@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 interface CollapsiblePaneProps {
+  id?: string;
   open: boolean;
   children: ReactNode;
   className?: string;
@@ -20,6 +21,7 @@ interface CollapsiblePaneProps {
  * the accessibility tree and tab order when hidden.
  */
 export function CollapsiblePane({
+  id,
   open,
   children,
   className,
@@ -27,6 +29,7 @@ export function CollapsiblePane({
 }: CollapsiblePaneProps) {
   return (
     <div
+      id={id}
       // `inert` is a boolean attribute; use empty string when set, otherwise omit.
       {...(open ? {} : { inert: "" })}
       aria-hidden={!open}

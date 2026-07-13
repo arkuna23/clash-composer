@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -18,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { FormError } from "@/components/ui/form-error";
 import {
   addRule,
   createRuleGroup,
@@ -96,10 +98,10 @@ interface RuleGroupsTabProps {
 }
 
 export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const listKey = ["configs", id, "rule-groups"];
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroup, setRenameGroup] = useState<string | null>(null);
   const [addRuleGroup, setAddRuleGroup] = useState<RuleGroup | null>(null);
@@ -153,10 +155,23 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
   };
 
   const toggle = (name: string) => {
-    setExpanded((prev) => ({ ...prev, [name]: !(prev[name] ?? false) }));
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      const expanded = new Set(next.getAll("expanded"));
+      if (expanded.has(name)) {
+        expanded.delete(name);
+      } else {
+        expanded.add(name);
+      }
+      next.delete("expanded");
+      for (const groupName of expanded) next.append("expanded", groupName);
+      return next;
+    }, { replace: true });
   };
 
   const groups = groupsQuery.data ?? [];
+  const expanded = new Set(searchParams.getAll("expanded"));
+  const numberFormatter = new Intl.NumberFormat(i18n.resolvedLanguage);
 
   return (
     <div className="space-y-4">
@@ -171,14 +186,25 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
         </Button>
       </div>
       {groupsQuery.isLoading ? (
-        <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-sm text-muted-foreground"
+        >
+          {t("common.loading")}
+        </p>
+      ) : groupsQuery.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {(groupsQuery.error as Error).message}
+        </p>
       ) : groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("groups.empty")}</p>
       ) : (
         <div className="space-y-3">
-          {groups.map((group) => {
-            const isOpen = expanded[group.name] ?? false;
+          {groups.map((group, groupIndex) => {
+            const isOpen = expanded.has(group.name);
             const isDefault = group.name === DEFAULT_GROUP;
+            const contentID = `rule-group-${groupIndex}-rules`;
             return (
               <div
                 key={group.name}
@@ -188,7 +214,9 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                   <button
                     type="button"
                     onClick={() => toggle(group.name)}
-                    className="flex min-w-0 items-center gap-2 text-sm font-medium hover:text-foreground/80 cursor-pointer"
+                    className="flex min-w-0 items-center gap-2 rounded-sm text-sm font-medium hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+                    aria-expanded={isOpen}
+                    aria-controls={contentID}
                   >
                     <ChevronRight
                       className={cn(
@@ -197,15 +225,20 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                       )}
                       aria-hidden
                     />
-                    <span className="truncate">{group.name}</span>
+                    <span className="truncate" translate="no">
+                      {group.name}
+                    </span>
                     {isDefault && (
                       <Badge variant="secondary" className="text-[10px]">
                         default
                       </Badge>
                     )}
                   </button>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {t("groups.ruleCount", { count: group.rules.length })}
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {t("groups.ruleCount", {
+                      count: group.rules.length,
+                      formattedCount: numberFormatter.format(group.rules.length),
+                    })}
                   </span>
                   <div className="ml-auto flex shrink-0 gap-1">
                     <Button
@@ -239,7 +272,7 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                     </Button>
                   </div>
                 </div>
-                <CollapsiblePane open={isOpen}>
+                <CollapsiblePane id={contentID} open={isOpen}>
                   <div className="border-t px-3 py-2 space-y-1">
                     {group.rules.length === 0 ? (
                       <p className="text-xs text-muted-foreground">
@@ -249,12 +282,15 @@ export function RuleGroupsTab({ id }: RuleGroupsTabProps) {
                       group.rules.map((rule, index) => (
                         <div
                           key={`${group.name}-${index}`}
-                          className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50"
+                          className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50 [content-visibility:auto] [contain-intrinsic-size:0_40px]"
                         >
                           <span className="text-xs text-muted-foreground w-8 shrink-0 font-mono">
                             {index}
                           </span>
-                          <code className="text-xs flex-1 break-all">
+                          <code
+                            className="text-xs flex-1 break-all"
+                            translate="no"
+                          >
                             {rule}
                           </code>
                           <Button
@@ -346,18 +382,24 @@ function CreateGroupDialog({
   const [index, setIndex] = useState<number>(1);
   const [batch, setBatch] = useState<RuleBatchDraft>(() => emptyRuleBatch(targets));
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setName("");
     setIndex(Math.max(1, groupCount));
     setBatch(emptyRuleBatch(targets));
+    setError("");
   }, [open, groupCount, targets]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const payload = ruleBatchPayload(batch);
-    if (!name.trim() || !payload) return;
+    if (!name.trim() || !payload) {
+      setError(t("groups.requiredFields"));
+      return;
+    }
+    setError("");
     setSubmitting(true);
     try {
       await createRuleGroup(configId, {
@@ -368,7 +410,7 @@ function CreateGroupDialog({
       onSuccess();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
@@ -386,25 +428,45 @@ function CreateGroupDialog({
             <Label htmlFor="group-name">{t("common.name")}</Label>
             <Input
               id="group-name"
+              name="groupName"
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError("");
+              }}
+              autoComplete="off"
+              spellCheck={false}
               required
-              autoFocus
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="group-index">{t("groups.indexLabel")}</Label>
             <Input
               id="group-index"
+              name="groupIndex"
               type="number"
+              inputMode="numeric"
               min={1}
               value={index}
-              onChange={(event) => setIndex(Number(event.target.value))}
+              onChange={(event) => {
+                setIndex(Number(event.target.value));
+                setError("");
+              }}
+              autoComplete="off"
               required
               className="max-w-[140px]"
             />
           </div>
-          <RuleBatchFields draft={batch} onChange={setBatch} targets={targets} />
+          <RuleBatchFields
+            idPrefix="create-group"
+            draft={batch}
+            onChange={(next) => {
+              setBatch(next);
+              setError("");
+            }}
+            targets={targets}
+          />
+          <FormError id="create-group-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -413,7 +475,7 @@ function CreateGroupDialog({
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? t("common.loading") : t("common.create")}
             </Button>
           </DialogFooter>
@@ -441,24 +503,33 @@ function RenameGroupDialog({
   const { t } = useTranslation();
   const [newName, setNewName] = useState(currentName);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (open) setNewName(currentName);
+    if (open) {
+      setNewName(currentName);
+      setError("");
+    }
   }, [open, currentName]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!newName.trim() || newName.trim() === currentName) {
+    if (!newName.trim()) {
+      setError(t("groups.nameRequired"));
+      return;
+    }
+    if (newName.trim() === currentName) {
       onOpenChange(false);
       return;
     }
+    setError("");
     setSubmitting(true);
     try {
       await updateRuleGroup(configId, currentName, { name: newName.trim() });
       onSuccess();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
@@ -472,17 +543,26 @@ function RenameGroupDialog({
             <DialogTitle>
               {t("groups.renameTitle", { name: currentName })}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("groups.renameHint")}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="rename-group">{t("common.name")}</Label>
             <Input
               id="rename-group"
+              name="groupName"
               value={newName}
-              onChange={(event) => setNewName(event.target.value)}
+              onChange={(event) => {
+                setNewName(event.target.value);
+                setError("");
+              }}
+              autoComplete="off"
+              spellCheck={false}
               required
-              autoFocus
             />
           </div>
+          <FormError id="rename-group-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -491,7 +571,7 @@ function RenameGroupDialog({
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? t("common.loading") : t("common.save")}
             </Button>
           </DialogFooter>
@@ -522,17 +602,23 @@ function AddRuleDialog({
   const [batch, setBatch] = useState<RuleBatchDraft>(() => emptyRuleBatch(targets));
   const [indexRaw, setIndexRaw] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setBatch(emptyRuleBatch(targets));
     setIndexRaw("");
+    setError("");
   }, [open, targets]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const payload = ruleBatchPayload(batch);
-    if (!group || !payload) return;
+    if (!group || !payload) {
+      setError(t("groups.rulesRequired"));
+      return;
+    }
+    setError("");
     setSubmitting(true);
     try {
       await addRule(configId, group.name, {
@@ -542,7 +628,7 @@ function AddRuleDialog({
       onSuccess();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
@@ -560,20 +646,35 @@ function AddRuleDialog({
               {t("groups.addRuleHint")}
             </DialogDescription>
           </DialogHeader>
-          <RuleBatchFields draft={batch} onChange={setBatch} targets={targets} />
+          <RuleBatchFields
+            idPrefix="add-rules"
+            draft={batch}
+            onChange={(next) => {
+              setBatch(next);
+              setError("");
+            }}
+            targets={targets}
+          />
           <div className="space-y-2">
             <Label htmlFor="rule-index">
               {t("groups.ruleIndexLabel")}
             </Label>
             <Input
               id="rule-index"
+              name="ruleIndex"
               type="number"
+              inputMode="numeric"
               min={0}
               value={indexRaw}
-              onChange={(event) => setIndexRaw(event.target.value)}
+              onChange={(event) => {
+                setIndexRaw(event.target.value);
+                setError("");
+              }}
+              autoComplete="off"
               className="max-w-[140px]"
             />
           </div>
+          <FormError id="add-rules-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -582,8 +683,8 @@ function AddRuleDialog({
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? t("common.loading") : t("common.add")}
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
+              {submitting ? t("common.loading") : t("groups.addRule")}
             </Button>
           </DialogFooter>
         </form>
@@ -593,12 +694,18 @@ function AddRuleDialog({
 }
 
 interface RuleBatchFieldsProps {
+  idPrefix: string;
   draft: RuleBatchDraft;
   onChange: (draft: RuleBatchDraft) => void;
   targets: string[];
 }
 
-function RuleBatchFields({ draft, onChange, targets }: RuleBatchFieldsProps) {
+function RuleBatchFields({
+  idPrefix,
+  draft,
+  onChange,
+  targets,
+}: RuleBatchFieldsProps) {
   const { t } = useTranslation();
 
   return (
@@ -613,21 +720,26 @@ function RuleBatchFields({ draft, onChange, targets }: RuleBatchFieldsProps) {
         <TabsTrigger value="generate">{t("groups.batchGenerate")}</TabsTrigger>
       </TabsList>
       <TabsContent value="yaml" className="space-y-2">
-        <Label htmlFor="batch-rules-yaml">{t("groups.rulesLabel")}</Label>
+        <Label htmlFor={`${idPrefix}-rules-yaml`}>{t("groups.rulesLabel")}</Label>
         <Textarea
-          id="batch-rules-yaml"
+          id={`${idPrefix}-rules-yaml`}
+          name="rulesYaml"
           value={draft.yaml}
           onChange={(event) => onChange({ ...draft, yaml: event.target.value })}
           rows={8}
           className="font-mono text-xs"
-          placeholder={"rules:\n  - DOMAIN-SUFFIX,example.com,DIRECT"}
+          placeholder={"rules:\n  - DOMAIN-SUFFIX,example.com,DIRECT\n  - …"}
+          autoComplete="off"
           spellCheck={false}
+          required={draft.mode === "yaml"}
         />
       </TabsContent>
       <TabsContent value="generate" className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label>{t("groups.ruleTypeLabel")}</Label>
+            <Label htmlFor={`${idPrefix}-rule-type`}>
+              {t("groups.ruleTypeLabel")}
+            </Label>
             <Select
               value={draft.ruleType}
               onValueChange={(ruleType) =>
@@ -637,12 +749,16 @@ function RuleBatchFields({ draft, onChange, targets }: RuleBatchFieldsProps) {
                 })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger id={`${idPrefix}-rule-type`} name="ruleType">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {RULE_TYPES.map((ruleType) => (
-                  <SelectItem key={ruleType} value={ruleType}>
+                  <SelectItem
+                    key={ruleType}
+                    value={ruleType}
+                    translate="no"
+                  >
                     {ruleType}
                   </SelectItem>
                 ))}
@@ -650,17 +766,19 @@ function RuleBatchFields({ draft, onChange, targets }: RuleBatchFieldsProps) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>{t("groups.targetLabel")}</Label>
+            <Label htmlFor={`${idPrefix}-target`}>
+              {t("groups.targetLabel")}
+            </Label>
             <Select
               value={draft.target}
               onValueChange={(target) => onChange({ ...draft, target })}
             >
-              <SelectTrigger>
+              <SelectTrigger id={`${idPrefix}-target`} name="target">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {targets.map((target) => (
-                  <SelectItem key={target} value={target}>
+                  <SelectItem key={target} value={target} translate="no">
                     {target}
                   </SelectItem>
                 ))}
@@ -671,26 +789,37 @@ function RuleBatchFields({ draft, onChange, targets }: RuleBatchFieldsProps) {
         </div>
         {draft.target === CUSTOM_TARGET && (
           <div className="space-y-2">
-            <Label htmlFor="batch-custom-target">{t("groups.customTarget")}</Label>
+            <Label htmlFor={`${idPrefix}-custom-target`}>
+              {t("groups.customTarget")}
+            </Label>
             <Input
-              id="batch-custom-target"
+              id={`${idPrefix}-custom-target`}
+              name="customTarget"
               value={draft.customTarget}
               onChange={(event) =>
                 onChange({ ...draft, customTarget: event.target.value })
               }
+              autoComplete="off"
+              spellCheck={false}
+              required
             />
           </div>
         )}
         <div className="space-y-2">
-          <Label htmlFor="batch-rule-values">{t("groups.valuesLabel")}</Label>
+          <Label htmlFor={`${idPrefix}-rule-values`}>
+            {t("groups.valuesLabel")}
+          </Label>
           <Textarea
-            id="batch-rule-values"
+            id={`${idPrefix}-rule-values`}
+            name="ruleValues"
             value={draft.values}
             onChange={(event) => onChange({ ...draft, values: event.target.value })}
             rows={7}
             className="font-mono text-xs"
-            placeholder={"example.com\nexample.org"}
+            placeholder={"example.com\nexample.org\n…"}
+            autoComplete="off"
             spellCheck={false}
+            required={draft.mode === "generate"}
           />
         </div>
       </TabsContent>
@@ -716,17 +845,26 @@ function EditRuleDialog({
   const { t } = useTranslation();
   const [rule, setRule] = useState(state?.initial ?? "");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (open && state) setRule(state.initial);
+    if (open && state) {
+      setRule(state.initial);
+      setError("");
+    }
   }, [open, state]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!state || !rule.trim() || rule.trim() === state.initial) {
+    if (!state || !rule.trim()) {
+      setError(t("groups.ruleRequired"));
+      return;
+    }
+    if (rule.trim() === state.initial) {
       onOpenChange(false);
       return;
     }
+    setError("");
     setSubmitting(true);
     try {
       await updateRule(configId, state.group.name, state.index, {
@@ -735,7 +873,7 @@ function EditRuleDialog({
       onSuccess();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t("errors.generic", { message: (error as Error).message }));
+      setError(t("errors.generic", { message: (error as Error).message }));
     } finally {
       setSubmitting(false);
     }
@@ -751,18 +889,27 @@ function EditRuleDialog({
                 group: state?.group.name ?? "",
               })}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("groups.editRuleHint")}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="edit-rule-text">{t("groups.ruleLabel")}</Label>
             <Input
               id="edit-rule-text"
+              name="rule"
               value={rule}
-              onChange={(event) => setRule(event.target.value)}
+              onChange={(event) => {
+                setRule(event.target.value);
+                setError("");
+              }}
+              autoComplete="off"
+              spellCheck={false}
               required
-              autoFocus
               className="font-mono text-xs"
             />
           </div>
+          <FormError id="edit-rule-error" message={error} />
           <DialogFooter>
             <Button
               type="button"
@@ -771,7 +918,7 @@ function EditRuleDialog({
             >
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? t("common.loading") : t("common.save")}
             </Button>
           </DialogFooter>

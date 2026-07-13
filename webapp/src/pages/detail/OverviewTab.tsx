@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormError } from "@/components/ui/form-error";
 import {
   Select,
   SelectContent,
@@ -24,9 +25,10 @@ const RULESET_STRATEGIES: { value: RulesetStrategy; label: string }[] = [
 interface OverviewTabProps {
   id: string;
   rule: MergeRule;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function OverviewTab({ id, rule }: OverviewTabProps) {
+export function OverviewTab({ id, rule, onDirtyChange }: OverviewTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [template, setTemplate] = useState(rule.template);
@@ -35,6 +37,23 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
   );
   const [cacheDurationSeconds, setCacheDurationSeconds] = useState(
     String(rule.cacheDurationSeconds ?? 0),
+  );
+  const [error, setError] = useState("");
+
+  const isDirty =
+    template !== rule.template ||
+    strategy !== (rule.rulesetStrategy ?? "") ||
+    cacheDurationSeconds !== String(rule.cacheDurationSeconds ?? 0);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange?.(false);
+    },
+    [onDirtyChange],
   );
 
   useEffect(() => {
@@ -56,15 +75,17 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
       }),
     onSuccess: (data) => {
       queryClient.setQueryData<MergeRule>(["configs", id], data);
+      setError("");
       toast.success(t("detail.overviewSaved"));
     },
     onError: (error: Error) => {
-      toast.error(t("errors.generic", { message: error.message }));
+      setError(t("errors.generic", { message: error.message }));
     },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setError("");
     mutation.mutate();
   };
 
@@ -74,13 +95,21 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
         <Label htmlFor="overview-template">{t("configs.templateLabel")}</Label>
         <Input
           id="overview-template"
+          name="template"
           value={template}
-          onChange={(event) => setTemplate(event.target.value)}
+          onChange={(event) => {
+            setTemplate(event.target.value);
+            setError("");
+          }}
+          autoComplete="off"
+          spellCheck={false}
           required
         />
       </div>
       <div className="space-y-2">
-        <Label>{t("configs.rulesetStrategyLabel")}</Label>
+        <Label htmlFor="overview-ruleset-strategy">
+          {t("configs.rulesetStrategyLabel")}
+        </Label>
         <Select
           value={strategy === "" ? "__empty" : strategy}
           onValueChange={(value) =>
@@ -89,7 +118,11 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
             )
           }
         >
-          <SelectTrigger className="max-w-xs">
+          <SelectTrigger
+            id="overview-ruleset-strategy"
+            name="rulesetStrategy"
+            className="max-w-xs"
+          >
             <SelectValue placeholder="—" />
           </SelectTrigger>
           <SelectContent>
@@ -110,18 +143,26 @@ export function OverviewTab({ id, rule }: OverviewTabProps) {
         </Label>
         <Input
           id="overview-cache-duration"
+          name="cacheDurationSeconds"
           type="number"
+          inputMode="numeric"
           min={0}
           step={1}
           value={cacheDurationSeconds}
           onChange={(event) => setCacheDurationSeconds(event.target.value)}
+          autoComplete="off"
           className="max-w-xs"
         />
         <p className="text-xs text-muted-foreground">
           {t("configs.cacheDurationHelp")}
         </p>
       </div>
-      <Button type="submit" disabled={mutation.isPending}>
+      <FormError id="overview-error" message={error} />
+      <Button
+        type="submit"
+        disabled={mutation.isPending}
+        aria-busy={mutation.isPending}
+      >
         {mutation.isPending ? t("common.loading") : t("detail.saveOverview")}
       </Button>
     </form>

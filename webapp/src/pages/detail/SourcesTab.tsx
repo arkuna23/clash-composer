@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CollapsiblePane } from "@/components/ui/collapsible-pane";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormError } from "@/components/ui/form-error";
 import {
   Select,
   SelectContent,
@@ -92,17 +93,43 @@ function draftsToConfigurations(drafts: GroupDraft[]): ConfigGroup[] {
     }));
 }
 
+function normalizeConfigurations(groups: ConfigGroup[]): ConfigGroup[] {
+  return groups.map((group) => ({
+    name: group.name,
+    sources: group.sources ?? [],
+    includeDirect: group.includeDirect ?? false,
+    includeGroups: group.includeGroups ?? [],
+    enableUrlTest: group.enableUrlTest ?? true,
+  }));
+}
+
 interface SourcesTabProps {
   id: string;
   rule: MergeRule;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function SourcesTab({ id, rule }: SourcesTabProps) {
+export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<GroupDraft[]>(() => ruleToDrafts(rule));
   const [newGroupName, setNewGroupName] = useState("");
   const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState("");
+  const isDirty =
+    JSON.stringify(draftsToConfigurations(drafts)) !==
+    JSON.stringify(normalizeConfigurations(rule.configurations ?? []));
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange?.(false);
+    },
+    [onDirtyChange],
+  );
 
   useEffect(() => {
     setDrafts(ruleToDrafts(rule));
@@ -117,10 +144,11 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
       }),
     onSuccess: (data) => {
       queryClient.setQueryData<MergeRule>(["configs", id], data);
+      setError("");
       toast.success(t("detail.sourcesSaved"));
     },
     onError: (error: Error) => {
-      toast.error(t("errors.generic", { message: error.message }));
+      setError(t("errors.generic", { message: error.message }));
     },
   });
 
@@ -140,11 +168,15 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
 
   const addGroup = () => {
     const name = newGroupName.trim();
-    if (!name) return;
-    if (drafts.some((group) => group.name === name)) {
-      toast.error(t("sources.groupExists"));
+    if (!name) {
+      setError(t("sources.groupNameRequired"));
       return;
     }
+    if (drafts.some((group) => group.name === name)) {
+      setError(t("sources.groupExists"));
+      return;
+    }
+    setError("");
     setDrafts((previous) => [
       ...previous,
       {
@@ -208,10 +240,22 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-center">
+        <Label htmlFor="sources-new-group" className="sr-only">
+          {t("sources.newGroupLabel")}
+        </Label>
         <Input
+          id="sources-new-group"
+          name="newGroupName"
           value={newGroupName}
-          onChange={(event) => setNewGroupName(event.target.value)}
+          onChange={(event) => {
+            setNewGroupName(event.target.value);
+            setError("");
+          }}
           placeholder={t("sources.newGroupName")}
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby={error ? "sources-error" : undefined}
+          aria-invalid={!!error}
           className="sm:max-w-xs"
         />
         <Button type="button" variant="outline" onClick={addGroup}>
@@ -223,20 +267,25 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
           className="sm:ml-auto"
           onClick={() => mutation.mutate()}
           disabled={mutation.isPending}
+          aria-busy={mutation.isPending}
         >
-          {mutation.isPending ? t("common.loading") : t("common.save")}
+          {mutation.isPending ? t("common.loading") : t("detail.saveSources")}
         </Button>
       </div>
+      <FormError id="sources-error" message={error} />
 
       {drafts.map((group, groupIndex) => (
         <section key={group.key} className="border-b pb-5 last:border-b-0">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Input
+              name={`configurations.${groupIndex}.name`}
               value={group.name}
               onChange={(event) =>
                 updateGroup(groupIndex, { ...group, name: event.target.value })
               }
               aria-label={t("sources.groupName")}
+              autoComplete="off"
+              spellCheck={false}
               className="font-medium sm:max-w-xs"
               required
             />
@@ -311,7 +360,9 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                             [source.key]: !isOpen,
                           }))
                         }
-                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-expanded={isOpen}
+                        aria-controls={`source-${source.key}-details`}
                       >
                         <ChevronRight
                           className={cn("h-4 w-4 shrink-0 transition-transform", isOpen && "rotate-90")}
@@ -320,7 +371,10 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                         <span className="shrink-0 text-xs font-medium">
                           {sourceKindLabel(source.kind)}
                         </span>
-                        <span className="truncate text-xs text-muted-foreground">
+                        <span
+                          className="truncate text-xs text-muted-foreground"
+                          translate="no"
+                        >
                           {source.value || sourcePlaceholder(source.kind)}
                         </span>
                       </button>
@@ -362,10 +416,15 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                         <Trash2 className="h-3.5 w-3.5" aria-hidden />
                       </Button>
                     </div>
-                    <CollapsiblePane open={isOpen}>
+                    <CollapsiblePane
+                      id={`source-${source.key}-details`}
+                      open={isOpen}
+                    >
                       <div className="grid gap-3 border-t p-3 sm:grid-cols-[11rem_minmax(0,1fr)]">
                         <div className="space-y-1">
-                          <Label>{t("sources.kindLabel")}</Label>
+                          <Label htmlFor={`source-${source.key}-kind`}>
+                            {t("sources.kindLabel")}
+                          </Label>
                           <Select
                             value={source.kind}
                             onValueChange={(value) =>
@@ -375,7 +434,10 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                               })
                             }
                           >
-                            <SelectTrigger>
+                            <SelectTrigger
+                              id={`source-${source.key}-kind`}
+                              name={`configurations.${groupIndex}.sources.${sourceIndex}.kind`}
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -386,8 +448,14 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                           </Select>
                         </div>
                         <div className="space-y-1">
-                          <Label>{t("sources.valueLabel")}</Label>
+                          <Label htmlFor={`source-${source.key}-value`}>
+                            {t("sources.valueLabel")}
+                          </Label>
                           <Input
+                            id={`source-${source.key}-value`}
+                            name={`configurations.${groupIndex}.sources.${sourceIndex}.value`}
+                            type={source.kind === "url" ? "url" : "text"}
+                            inputMode={source.kind === "url" ? "url" : undefined}
                             value={source.value}
                             onChange={(event) =>
                               updateSource(groupIndex, sourceIndex, {
@@ -396,6 +464,8 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                               })
                             }
                             placeholder={sourcePlaceholder(source.kind)}
+                            autoComplete="off"
+                            spellCheck={false}
                             required
                           />
                         </div>
@@ -410,6 +480,7 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
+                    name={`configurations.${groupIndex}.includeDirect`}
                     checked={group.includeDirect}
                     onChange={(event) =>
                       updateGroup(groupIndex, { ...group, includeDirect: event.target.checked })
@@ -421,6 +492,7 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
+                    name={`configurations.${groupIndex}.enableUrlTest`}
                     checked={group.enableUrlTest}
                     onChange={(event) =>
                       updateGroup(groupIndex, { ...group, enableUrlTest: event.target.checked })
@@ -430,13 +502,19 @@ export function SourcesTab({ id, rule }: SourcesTabProps) {
                   <span>{t("sources.enableUrlTest")}</span>
                 </label>
                 <div className="space-y-1 sm:col-span-2">
-                  <Label>{t("sources.includeGroups")}</Label>
+                  <Label htmlFor={`group-${group.key}-include-groups`}>
+                    {t("sources.includeGroups")}
+                  </Label>
                   <Input
+                    id={`group-${group.key}-include-groups`}
+                    name={`configurations.${groupIndex}.includeGroups`}
                     value={group.includeGroups}
                     onChange={(event) =>
                       updateGroup(groupIndex, { ...group, includeGroups: event.target.value })
                     }
                     placeholder={t("sources.includeGroupsPlaceholder")}
+                    autoComplete="off"
+                    spellCheck={false}
                   />
                 </div>
               </div>

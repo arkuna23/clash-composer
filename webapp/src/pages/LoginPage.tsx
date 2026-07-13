@@ -1,7 +1,6 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { toast } from "sonner";
 import { Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormError } from "@/components/ui/form-error";
 import { listConfigs } from "@/api/configs";
 import { ApiError } from "@/api/client";
 import { useAuthToken } from "@/hooks/useAuthToken";
@@ -32,6 +32,14 @@ export function LoginPage() {
   const { isAuthenticated } = useAuthToken();
   const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const tokenInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 640px)").matches) {
+      tokenInputRef.current?.focus();
+    }
+  }, []);
 
   if (isAuthenticated) {
     const from = (location.state as { from?: string } | null)?.from;
@@ -42,9 +50,10 @@ export function LoginPage() {
     event.preventDefault();
     const trimmed = token.trim();
     if (!trimmed) {
-      toast.error(t("login.invalidToken"));
+      setError(t("login.invalidToken"));
       return;
     }
+    setError("");
     setSubmitting(true);
     // Persist first so that listConfigs() picks it up via getStoredToken().
     setStoredToken(trimmed);
@@ -55,7 +64,7 @@ export function LoginPage() {
     } catch (error) {
       const message =
         error instanceof ApiError ? error.message : (error as Error).message;
-      toast.error(t("login.verifyFailed", { message }));
+      setError(t("login.verifyFailed", { message }));
       // ApiError 401 already cleared the token; otherwise the user may retry.
     } finally {
       setSubmitting(false);
@@ -71,7 +80,13 @@ export function LoginPage() {
       <div className="flex justify-end p-4">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              aria-label={`${t("common.language")}: ${i18n.resolvedLanguage}`}
+              title={t("common.language")}
+            >
               <Globe className="h-4 w-4" aria-hidden />
               <span className="text-xs text-muted-foreground uppercase">
                 {i18n.resolvedLanguage}
@@ -90,10 +105,10 @@ export function LoginPage() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <div className="flex-1 flex items-center justify-center px-4 pb-24">
-        <Card className="w-full max-w-md animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-500 ease-out">
+      <main className="flex-1 flex items-center justify-center px-4 pb-24">
+        <Card className="w-full max-w-md animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-500 ease-out motion-reduce:animate-none">
           <CardHeader>
-            <CardTitle>{t("login.title")}</CardTitle>
+            <CardTitle as="h1">{t("login.title")}</CardTitle>
             <CardDescription>{t("login.description")}</CardDescription>
           </CardHeader>
           <CardContent>
@@ -101,22 +116,35 @@ export function LoginPage() {
               <div className="space-y-2">
                 <Label htmlFor="token">{t("login.tokenLabel")}</Label>
                 <Input
+                  ref={tokenInputRef}
                   id="token"
+                  name="token"
                   type="password"
                   autoComplete="current-password"
                   value={token}
-                  onChange={(event) => setToken(event.target.value)}
+                  onChange={(event) => {
+                    setToken(event.target.value);
+                    setError("");
+                  }}
                   placeholder={t("login.tokenPlaceholder")}
-                  autoFocus
+                  spellCheck={false}
+                  aria-describedby={error ? "login-error" : undefined}
+                  aria-invalid={!!error}
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={submitting}>
+              <FormError id="login-error" message={error} />
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={submitting}
+                aria-busy={submitting}
+              >
                 {submitting ? t("common.loading") : t("login.submit")}
               </Button>
             </form>
           </CardContent>
         </Card>
-      </div>
+      </main>
     </div>
   );
 }

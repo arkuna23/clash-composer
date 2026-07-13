@@ -1,5 +1,11 @@
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useParams } from "react-router-dom";
+import {
+  Link,
+  useBlocker,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,10 +29,73 @@ import { RuleProvidersTab } from "@/pages/detail/RuleProvidersTab";
 import { RuleGroupsTab } from "@/pages/detail/RuleGroupsTab";
 import { SubscriptionTab } from "@/pages/detail/SubscriptionTab";
 
+const DETAIL_TABS = [
+  "overview",
+  "sources",
+  "providers",
+  "groups",
+  "subscription",
+] as const;
+
+type DetailTab = (typeof DETAIL_TABS)[number];
+
 export function ConfigDetailPage() {
   const { t } = useTranslation();
   const params = useParams<{ id: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [dirtyTabs, setDirtyTabs] = useState({ overview: false, sources: false });
   const id = params.id ?? "";
+  const requestedTab = searchParams.get("tab");
+  const activeTab: DetailTab = DETAIL_TABS.includes(requestedTab as DetailTab)
+    ? (requestedTab as DetailTab)
+    : "overview";
+  const hasUnsavedChanges = dirtyTabs.overview || dirtyTabs.sources;
+
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasUnsavedChanges &&
+      (currentLocation.pathname !== nextLocation.pathname ||
+        currentLocation.search !== nextLocation.search),
+  );
+
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    if (window.confirm(t("detail.unsavedConfirm"))) {
+      blocker.proceed();
+    } else {
+      blocker.reset();
+    }
+  }, [blocker, t]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  const setOverviewDirty = useCallback((dirty: boolean) => {
+    setDirtyTabs((previous) =>
+      previous.overview === dirty ? previous : { ...previous, overview: dirty },
+    );
+  }, []);
+
+  const setSourcesDirty = useCallback((dirty: boolean) => {
+    setDirtyTabs((previous) =>
+      previous.sources === dirty ? previous : { ...previous, sources: dirty },
+    );
+  }, []);
+
+  const onTabChange = (tab: string) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("tab", tab);
+      return next;
+    });
+  };
 
   const ruleQuery = useQuery({
     queryKey: ["configs", id],
@@ -42,23 +111,32 @@ export function ConfigDetailPage() {
             <ArrowLeft className="h-4 w-4" aria-hidden />
           </Link>
         </Button>
-        <h1 className="text-xl font-semibold">{id}</h1>
+        <h1
+          className="min-w-0 break-all text-xl font-semibold"
+          translate="no"
+        >
+          {id}
+        </h1>
       </div>
 
       {ruleQuery.isLoading ? (
         <Card>
-          <CardContent className="py-8 text-sm text-muted-foreground">
+          <CardContent
+            role="status"
+            aria-live="polite"
+            className="py-8 text-sm text-muted-foreground"
+          >
             {t("common.loading")}
           </CardContent>
         </Card>
       ) : ruleQuery.isError ? (
         <Card>
-          <CardContent className="py-8 text-sm text-destructive">
+          <CardContent role="alert" className="py-8 text-sm text-destructive">
             {(ruleQuery.error as Error).message}
           </CardContent>
         </Card>
       ) : ruleQuery.data ? (
-        <Tabs defaultValue="overview">
+        <Tabs value={activeTab} onValueChange={onTabChange}>
           <TabsList className="max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="overview">{t("detail.tabOverview")}</TabsTrigger>
             <TabsTrigger value="sources">{t("detail.tabSources")}</TabsTrigger>
@@ -79,12 +157,20 @@ export function ConfigDetailPage() {
                 <CardDescription>{t("app.subtitle")}</CardDescription>
               </CardHeader>
               <CardContent>
-                <OverviewTab id={id} rule={ruleQuery.data} />
+                <OverviewTab
+                  id={id}
+                  rule={ruleQuery.data}
+                  onDirtyChange={setOverviewDirty}
+                />
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="sources">
-            <SourcesTab id={id} rule={ruleQuery.data} />
+            <SourcesTab
+              id={id}
+              rule={ruleQuery.data}
+              onDirtyChange={setSourcesDirty}
+            />
           </TabsContent>
           <TabsContent value="providers">
             <Card>

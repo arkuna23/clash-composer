@@ -7,6 +7,12 @@ import zh from "./locales/zh.json";
 export const SUPPORTED_LANGUAGES = ["zh", "en"] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
+function syncDocumentLanguage(language?: string) {
+  document.documentElement.lang = language?.startsWith("en") ? "en" : "zh-CN";
+}
+
+i18n.on("languageChanged", syncDocumentLanguage);
+
 void i18n
   .use(LanguageDetector)
   .use(initReactI18next)
@@ -23,6 +29,7 @@ void i18n
       lookupLocalStorage: "clash-composer.lang",
       caches: ["localStorage"],
     },
-  });
+  })
+  .then(() => syncDocumentLanguage(i18n.resolvedLanguage));
 
 export default i18n;
