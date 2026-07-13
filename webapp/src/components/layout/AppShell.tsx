@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { PageTransition } from "@/components/layout/PageTransition";
+import { ThemeMenu } from "@/components/theme/ThemeMenu";
 import { useAuthToken } from "@/hooks/useAuthToken";
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/i18n";
 
@@ -90,6 +91,7 @@ export function AppShell() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            <ThemeMenu />
             <Button
               variant="ghost"
               size="sm"

@@ -23,6 +23,10 @@
     "copied": "Copied",
     "download": "Download",
     "language": "Language",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
     "logout": "Logout",
     "search": "Search",
     "skipToContent": "Skip to Main Content"

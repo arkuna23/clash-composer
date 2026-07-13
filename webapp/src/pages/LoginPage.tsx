@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FormError } from "@/components/ui/form-error";
+import { ThemeMenu } from "@/components/theme/ThemeMenu";
 import { listConfigs } from "@/api/configs";
 import { ApiError } from "@/api/client";
 import { useAuthToken } from "@/hooks/useAuthToken";
@@ -77,7 +78,7 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="flex justify-end p-4">
+      <div className="flex justify-end gap-1 p-4">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -104,6 +105,7 @@ export function LoginPage() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        <ThemeMenu />
       </div>
       <main className="flex-1 flex items-center justify-center px-4 pb-24">
         <Card className="w-full max-w-md animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-500 ease-out motion-reduce:animate-none">

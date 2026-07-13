@@ -5,6 +5,29 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        const storageKey = "clash-composer-theme";
+        let theme = "system";
+        try {
+          theme = localStorage.getItem(storageKey) || theme;
+        } catch {
+          // Use the system preference when storage is unavailable.
+        }
+        if (!["light", "dark", "system"].includes(theme)) {
+          theme = "system";
+        }
+        const dark =
+          theme === "dark" ||
+          (theme === "system" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        document
+          .querySelector('meta[name="theme-color"]')
+          .setAttribute("content", dark ? "#111315" : "#ffffff");
+      })();
+    </script>
     <title>Clash Composer</title>
   </head>
   <body>
