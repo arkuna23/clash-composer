@@ -34,7 +34,9 @@ import type { AddRulePayload } from "@/api/types";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -47,21 +49,125 @@ import {
 
 const DEFAULT_GROUP = "default";
 const CUSTOM_TARGET = "__custom";
-const RULE_TYPES = [
-  "DOMAIN",
-  "DOMAIN-SUFFIX",
-  "DOMAIN-KEYWORD",
-  "IP-CIDR",
-  "IP-CIDR6",
+type RuleValueMode = "values" | "conditions" | "none";
+type RuleTargetMode = "policy" | "subRule";
+
+function defineRuleType<const Value extends string>(
+  value: Value,
+  placeholder: string,
+  valueMode: RuleValueMode = "values",
+  targetMode: RuleTargetMode = "policy",
+) {
+  return { value, placeholder, valueMode, targetMode };
+}
+
+const RULE_TYPE_GROUPS = [
+  {
+    labelKey: "groups.ruleCategoryDomain",
+    types: [
+      defineRuleType("DOMAIN", "example.com"),
+      defineRuleType("DOMAIN-SUFFIX", "example.com"),
+      defineRuleType("DOMAIN-KEYWORD", "google"),
+      defineRuleType("DOMAIN-WILDCARD", "*.example.com"),
+      defineRuleType("DOMAIN-REGEX", "^api\\..*\\.com$"),
+      defineRuleType("GEOSITE", "youtube"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategoryDestinationIp",
+    types: [
+      defineRuleType("IP-CIDR", "192.0.2.0/24"),
+      defineRuleType("IP-CIDR6", "2001:db8::/32"),
+      defineRuleType("IP-SUFFIX", "8.8.8.8/24"),
+      defineRuleType("IP-ASN", "13335"),
+      defineRuleType("GEOIP", "CN"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategorySourceIp",
+    types: [
+      defineRuleType("SRC-GEOIP", "CN"),
+      defineRuleType("SRC-IP-ASN", "9808"),
+      defineRuleType("SRC-IP-CIDR", "192.168.1.0/24"),
+      defineRuleType("SRC-IP-SUFFIX", "192.168.1.201/8"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategoryPort",
+    types: [
+      defineRuleType("DST-PORT", "443"),
+      defineRuleType("SRC-PORT", "7777"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategoryInbound",
+    types: [
+      defineRuleType("IN-PORT", "7890"),
+      defineRuleType("IN-TYPE", "SOCKS/HTTP"),
+      defineRuleType("IN-USER", "mihomo"),
+      defineRuleType("IN-NAME", "mixed-in"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategoryProcess",
+    types: [
+      defineRuleType("PROCESS-PATH", "/usr/bin/wget"),
+      defineRuleType("PROCESS-PATH-WILDCARD", "/usr/*/wget"),
+      defineRuleType("PROCESS-PATH-REGEX", ".*bin/wget"),
+      defineRuleType("PROCESS-NAME", "curl"),
+      defineRuleType("PROCESS-NAME-WILDCARD", "*telegram*"),
+      defineRuleType("PROCESS-NAME-REGEX", "(?i)Telegram"),
+      defineRuleType("UID", "1001"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategoryNetwork",
+    types: [
+      defineRuleType("NETWORK", "udp"),
+      defineRuleType("DSCP", "4"),
+    ],
+  },
+  {
+    labelKey: "groups.ruleCategorySpecial",
+    types: [
+      defineRuleType("RULE-SET", "provider-name"),
+      defineRuleType(
+        "AND",
+        "((DOMAIN,example.com),(NETWORK,UDP))",
+        "conditions",
+      ),
+      defineRuleType(
+        "OR",
+        "((NETWORK,UDP),(DOMAIN,example.com))",
+        "conditions",
+      ),
+      defineRuleType("NOT", "((DOMAIN,example.com))", "conditions"),
+      defineRuleType("SUB-RULE", "(NETWORK,tcp)", "conditions", "subRule"),
+      defineRuleType("MATCH", "", "none"),
+    ],
+  },
 ] as const;
+
+type RuleTypeGroup = (typeof RULE_TYPE_GROUPS)[number];
+type RuleTypeDefinition = RuleTypeGroup["types"][number];
+type RuleType = RuleTypeDefinition["value"];
+
+function getRuleTypeDefinition(ruleType: RuleType): RuleTypeDefinition {
+  for (const group of RULE_TYPE_GROUPS) {
+    const definition = group.types.find((type) => type.value === ruleType);
+    if (definition) return definition;
+  }
+  throw new Error(`unknown rule type: ${ruleType}`);
+}
 
 interface RuleBatchDraft {
   mode: "yaml" | "generate";
   yaml: string;
-  ruleType: (typeof RULE_TYPES)[number];
+  ruleType: RuleType;
   values: string;
   target: string;
   customTarget: string;
+  subRule: string;
 }
 
 function emptyRuleBatch(targets: string[]): RuleBatchDraft {
@@ -72,6 +178,7 @@ function emptyRuleBatch(targets: string[]): RuleBatchDraft {
     values: "",
     target: targets[0] ?? CUSTOM_TARGET,
     customTarget: "",
+    subRule: "",
   };
 }
 
@@ -79,9 +186,17 @@ function ruleBatchPayload(draft: RuleBatchDraft): AddRulePayload | null {
   if (draft.mode === "yaml") {
     return draft.yaml.trim() ? { rulesYaml: draft.yaml } : null;
   }
+  const definition = getRuleTypeDefinition(draft.ruleType);
   const target =
-    draft.target === CUSTOM_TARGET ? draft.customTarget.trim() : draft.target;
+    definition.targetMode === "subRule"
+      ? draft.subRule.trim()
+      : draft.target === CUSTOM_TARGET
+        ? draft.customTarget.trim()
+        : draft.target;
   if (!target) return null;
+  if (definition.valueMode === "none") {
+    return { rules: [`${draft.ruleType},${target}`] };
+  }
   const values = draft.values
     .split("\n")
     .map((value) => value.trim().replace(/^\-\s*/, ""))
@@ -708,6 +823,8 @@ function RuleBatchFields({
   targets,
 }: RuleBatchFieldsProps) {
   const { t } = useTranslation();
+  const definition = getRuleTypeDefinition(draft.ruleType);
+  const usesPolicyTarget = definition.targetMode === "policy";
 
   return (
     <Tabs
@@ -754,41 +871,70 @@ function RuleBatchFields({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {RULE_TYPES.map((ruleType) => (
-                  <SelectItem
-                    key={ruleType}
-                    value={ruleType}
-                    translate="no"
-                  >
-                    {ruleType}
-                  </SelectItem>
+                {RULE_TYPE_GROUPS.map((group) => (
+                  <SelectGroup key={group.labelKey}>
+                    <SelectLabel>{t(group.labelKey)}</SelectLabel>
+                    {group.types.map((ruleType) => (
+                      <SelectItem
+                        key={ruleType.value}
+                        value={ruleType.value}
+                        translate="no"
+                      >
+                        {ruleType.value}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-target`}>
-              {t("groups.targetLabel")}
-            </Label>
-            <Select
-              value={draft.target}
-              onValueChange={(target) => onChange({ ...draft, target })}
-            >
-              <SelectTrigger id={`${idPrefix}-target`} name="target">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {targets.map((target) => (
-                  <SelectItem key={target} value={target} translate="no">
-                    {target}
-                  </SelectItem>
-                ))}
-                <SelectItem value={CUSTOM_TARGET}>{t("groups.customTarget")}</SelectItem>
-              </SelectContent>
-            </Select>
+            {usesPolicyTarget ? (
+              <>
+                <Label htmlFor={`${idPrefix}-target`}>
+                  {t("groups.targetLabel")}
+                </Label>
+                <Select
+                  value={draft.target}
+                  onValueChange={(target) => onChange({ ...draft, target })}
+                >
+                  <SelectTrigger id={`${idPrefix}-target`} name="target">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {targets.map((target) => (
+                      <SelectItem key={target} value={target} translate="no">
+                        {target}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_TARGET}>
+                      {t("groups.customTarget")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            ) : (
+              <>
+                <Label htmlFor={`${idPrefix}-sub-rule`}>
+                  {t("groups.subRuleLabel")}
+                </Label>
+                <Input
+                  id={`${idPrefix}-sub-rule`}
+                  name="subRule"
+                  value={draft.subRule}
+                  onChange={(event) =>
+                    onChange({ ...draft, subRule: event.target.value })
+                  }
+                  placeholder={t("groups.subRulePlaceholder")}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required={draft.mode === "generate"}
+                />
+              </>
+            )}
           </div>
         </div>
-        {draft.target === CUSTOM_TARGET && (
+        {usesPolicyTarget && draft.target === CUSTOM_TARGET && (
           <div className="space-y-2">
             <Label htmlFor={`${idPrefix}-custom-target`}>
               {t("groups.customTarget")}
@@ -806,23 +952,29 @@ function RuleBatchFields({
             />
           </div>
         )}
-        <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-rule-values`}>
-            {t("groups.valuesLabel")}
-          </Label>
-          <Textarea
-            id={`${idPrefix}-rule-values`}
-            name="ruleValues"
-            value={draft.values}
-            onChange={(event) => onChange({ ...draft, values: event.target.value })}
-            rows={7}
-            className="font-mono text-xs"
-            placeholder={"example.com\nexample.org\n…"}
-            autoComplete="off"
-            spellCheck={false}
-            required={draft.mode === "generate"}
-          />
-        </div>
+        {definition.valueMode !== "none" && (
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-rule-values`}>
+              {definition.valueMode === "conditions"
+                ? t("groups.conditionsLabel")
+                : t("groups.valuesLabel")}
+            </Label>
+            <Textarea
+              id={`${idPrefix}-rule-values`}
+              name="ruleValues"
+              value={draft.values}
+              onChange={(event) =>
+                onChange({ ...draft, values: event.target.value })
+              }
+              rows={7}
+              className="font-mono text-xs"
+              placeholder={`${definition.placeholder}\n…`}
+              autoComplete="off"
+              spellCheck={false}
+              required={draft.mode === "generate"}
+            />
+          </div>
+        )}
       </TabsContent>
     </Tabs>
   );
