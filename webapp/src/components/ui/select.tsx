@@ -7,6 +7,25 @@ const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
 
+function scrollSelectViewport(event: React.WheelEvent<HTMLDivElement>) {
+  const viewport = event.currentTarget;
+  const multiplier =
+    event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? viewport.clientHeight
+        : 1;
+  const nextScrollTop = Math.max(
+    0,
+    Math.min(
+      viewport.scrollHeight - viewport.clientHeight,
+      viewport.scrollTop + event.deltaY * multiplier,
+    ),
+  );
+  if (nextScrollTop === viewport.scrollTop) return;
+  viewport.scrollTop = nextScrollTop;
+}
+
 const SelectScrollUpButton = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.ScrollUpButton>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollUpButton>
@@ -86,6 +105,7 @@ const SelectContent = React.forwardRef<
     >
       <SelectScrollUpButton />
       <SelectPrimitive.Viewport
+        onWheel={scrollSelectViewport}
         className={cn(
           "p-1",
           position === "popper" &&
