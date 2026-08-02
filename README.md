@@ -1,39 +1,50 @@
 # Clash Composer
 
-`clash-composer` 是一个用于管理和组合 Mihomo/Clash 配置的小工具。  
+`clash-composer` 用于组合 Mihomo/Clash 配置：从本地文件、订阅 URL 或命令读取代理，合并到模板 YAML，并输出订阅。它同时提供 CLI、HTTP API 和内嵌 Web UI。
 
-当前工具适合把不同来源的代理节点整理到统一模板里，再生成一份 `merged.yaml`。除了 CLI，还内置了一个 HTTP API 与对应的 React Web UI（默认嵌入二进制）。
+## 功能
+
+- 按配置分组合并代理来源，支持 `DIRECT`、分组插入和 URLTest。
+- 下载或生成 Mihomo/Clash 可直接使用的订阅。
+- 通过 Web UI 管理合并规则、模板规则、规则提供器和配置目录文件。
 
 ## 构建
-
-默认构建会先编译 `webapp/`，再把构建产物 (`webapp/dist`) 嵌入 Go 二进制：
 
 ```bash
 make build
 ```
 
-构建产物位于：
+默认构建会编译并嵌入 Web UI，产物为 `build/clash-composer`。只需要 API/CLI 时可使用 `make build-slim`。
+
+## 快速使用
+
+合并示例配置：
 
 ```bash
-build/clash-composer
+./build/clash-composer merge example/merge.json
 ```
 
-如果不需要前端，可以使用 slim 构建（添加 `noembed` build tag，跳过 `pnpm install` / `pnpm run build`）：
+命令会在当前目录写入 `merged.yaml`。下载原始订阅：
 
 ```bash
-make build-slim
+./build/clash-composer download <subscription-url> > subscription.yaml
 ```
 
-清理构建产物：
+启动 API 和 Web UI：
 
 ```bash
-make clean        # 仅清理 build/
-make distclean    # 同时清理 webapp/node_modules 和 webapp/dist 内容
+./build/clash-composer serve -config-dir ./configs -token <secret>
 ```
+
+服务默认监听 `127.0.0.1:8080`，浏览器访问 `http://127.0.0.1:8080/`。`config-dir` 不存在时会自动创建；其中的本地模板、配置源和命令均在该目录范围内解析或执行。
+
+## 配置与 API
+
+合并规则格式和可用配置项可参考 [example/merge.json](example/merge.json)。完整的 HTTP API、Web UI 鉴权、文件上传、规则管理与订阅缓存说明见 [docs/http.md](docs/http.md)。
 
 ## 部署
 
-部署脚本会读取仓库根目录的 `.env`，交叉编译目标机器二进制，上传到远端并重启用户级 systemd 服务。`.env` 包含远程机器密码，已被 `.gitignore` 忽略；仓库只提交 `.env.example`。
+部署脚本从仓库根目录的 `.env` 读取目标主机信息，交叉编译、上传二进制并重启用户级 systemd 服务：
 
 ```bash
 cp .env.example .env
@@ -41,118 +52,8 @@ $EDITOR .env
 make deploy
 ```
 
-脚本依赖 `sshpass`、`ssh`、`scp` 和 `make`。当前默认示例面向 `linux/arm64`，可在 `.env` 中调整 `DEPLOY_GOOS`、`DEPLOY_GOARCH` 和安装路径。
+`.env` 包含凭据，不能提交到仓库。变量含义见 [.env.example](.env.example)。
 
-## 使用
+## 参与开发
 
-### 0. 查看版本
-
-```bash
-go run . version
-```
-
-### 1. 合并配置
-
-```bash
-go run . merge example/merge.json
-```
-
-执行后会在当前目录生成：
-
-```bash
-merged.yaml
-```
-
-`merge` 使用一个 JSON 规则文件描述模板和配置来源，例如：
-
-```json
-{
-  "template": "example/template.yaml",
-  "configurations": [
-    {
-      "name": "High",
-      "sources": [
-        { "path": "example/high.yaml" }
-      ],
-      "includeDirect": true,
-      "includeGroups": [
-        { "name": "Common", "mode": "proxy" }
-      ]
-    },
-    {
-      "name": "Common",
-      "sources": [
-        { "path": "example/common.yaml" }
-      ],
-      "includeDirect": true
-    }
-  ],
-  "cacheDurationSeconds": 0,
-  "rulesetStrategy": "url-ruleset"
-}
-```
-
-`configurations` 是有序数组，数组顺序决定生成的代理分组顺序。每个配置分组默认会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`enableUrlTest` 设为 `false` 时只生成 `<分组名>` select，节点、`DIRECT` 和插入项会直接加入该 select。`includeDirect` 会把 `DIRECT` 插入到 select 分组中。
-
-`includeGroups` 是有序插入条目数组。`mode: "proxy"` 会把目标分组作为一个代理节点插入；`mode: "flatten"` 会把目标配置分组来源中的代理展开到当前分组列表。展开模式只能选择其他 `configurations` 分组，模板中的 proxy group 和 `DIRECT` / `REJECT` 只能使用 `proxy` 模式。旧版 `includeGroups: ["Common"]` 会在服务启动时迁移为 `[{"name":"Common","mode":"proxy"}]`。
-
-`cacheDurationSeconds` 控制订阅缓存时长，单位秒；`0` 或缺省表示每次下载订阅时实时生成。
-
-配置来源 `sources` 支持三种形式，且每项只能设置一种：
-
-- `path`: 从本地文件读取
-- `url`: 从 HTTP 订阅地址下载
-- `cmd`: 从命令的 `stdout` 读取
-
-`cmd` 会在 merge JSON 文件所在目录执行。
-
-### 2. 下载订阅
-
-```bash
-go run . download https://your-subscription-url
-```
-
-`download` 会将下载内容直接输出到 `stdout`，因此通常配合重定向使用：
-
-```bash
-go run . download https://your-subscription-url > subscription.yaml
-```
-
-### 3. 启动 HTTP 服务 + Web UI
-
-```bash
-./build/clash-composer serve -config-dir ./configs -token <secret>
-```
-
-- HTTP API 挂载在 `/api/` 前缀下，详见 [docs/http.md](docs/http.md)。
-- 默认构建会同时提供 Web UI；浏览器打开 `http://127.0.0.1:8080/` 即可使用。
-- slim 构建（`make build-slim`）只暴露 `/api/`，根路径会返回 404 提示。
-
-## Web UI 开发
-
-Web UI 源码位于 `webapp/`（React + Vite + TypeScript + Tailwind + shadcn/ui），开发流程：
-
-```bash
-make dev
-```
-
-`make dev` 会先构建后端，再启动测试后端和 Vite 前端。默认后端监听 `127.0.0.1:8080`，配置目录为 `./configs`，登录 token 为 `dev`。打开 `http://127.0.0.1:5173/` 即可。
-
-可以通过 Make 变量覆盖默认值：
-
-```bash
-make dev DEV_CONFIG_DIR=./configs DEV_TOKEN=dev DEV_ADDR=127.0.0.1:8080
-```
-
-## 示例文件
-
-- `example/template.yaml`: 基础模板配置
-- `example/high.yaml`: High 组示例代理
-- `example/common.yaml`: Common 组示例代理
-- `example/merge.json`: 合并示例规则
-
-## 测试
-
-```bash
-go test ./...
-```
+开发环境、前后端调试、验证与提交约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
