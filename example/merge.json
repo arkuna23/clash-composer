@@ -11,7 +11,10 @@
       "includeDirect": true,
       "enableUrlTest": true,
       "includeGroups": [
-        "Common"
+        {
+          "name": "Common",
+          "mode": "proxy"
+        }
       ]
     },
     {

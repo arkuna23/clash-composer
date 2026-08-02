@@ -100,7 +100,9 @@ Content-Type: application/json
       ],
       "includeDirect": true,
       "enableUrlTest": true,
-      "includeGroups": ["Common"]
+      "includeGroups": [
+        { "name": "Common", "mode": "proxy" }
+      ]
     },
     {
       "name": "Common",
@@ -119,7 +121,11 @@ Content-Type: application/json
 
 `configurations` 数组顺序决定生成代理分组的顺序。每个配置分组的 `sources` 支持 `path`、`url`、`cmd` 三种形式，每项必须且只能设置一种。`path` 必须解析到 `config-dir` 内，`cmd` 会在 `config-dir` 内执行。
 
-`enableUrlTest` 缺省或为 `true` 时会生成 `<分组名>-UrlTest`；设为 `false` 时只生成 `<分组名>` select，节点和插入项直接进入该 select。`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组；`includeGroups` 可以插入其他配置分组名、模板中已有的 proxy group 名称，或内置的 `DIRECT` / `REJECT`。旧版对象结构和旧版来源数组仍可读取，API 返回时会规范化为有序数组。
+`enableUrlTest` 缺省或为 `true` 时会生成 `<分组名>-UrlTest`；设为 `false` 时只生成 `<分组名>` select，节点和插入项直接进入该 select。`includeDirect` 为 `true` 时会把 `DIRECT` 插入该分组的 select 代理组。
+
+`includeGroups` 是有序插入条目数组。`mode: "proxy"` 将目标分组作为一个代理节点插入；`mode: "flatten"` 将目标配置分组来源中的代理名称展开到当前 select。展开模式只能选择其他 `configurations` 分组，模板 proxy group 以及 `DIRECT` / `REJECT` 只能使用 `proxy` 模式。旧版 `includeGroups: ["Common"]` 会按 `proxy` 模式兼容读取，并在服务启动时迁移为对象条目。
+
+服务启动时还会把旧版 `configurations` 对象格式和分组值为来源数组的格式迁移为当前有序数组格式；API 返回和保存的配置均使用新结构。
 
 创建成功返回 `201 Created` 和保存后的 JSON。若配置已存在，返回 `409 Conflict`。
 

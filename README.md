@@ -75,7 +75,9 @@ merged.yaml
         { "path": "example/high.yaml" }
       ],
       "includeDirect": true,
-      "includeGroups": ["Common"]
+      "includeGroups": [
+        { "name": "Common", "mode": "proxy" }
+      ]
     },
     {
       "name": "Common",
@@ -90,7 +92,9 @@ merged.yaml
 }
 ```
 
-`configurations` 是有序数组，数组顺序决定生成的代理分组顺序。每个配置分组默认会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`enableUrlTest` 设为 `false` 时只生成 `<分组名>` select，节点、`DIRECT` 和 `includeGroups` 会直接加入该 select。`includeDirect` 会把 `DIRECT` 插入到 select 分组中，`includeGroups` 可以插入其他已有分组名或其他配置分组名用于分流。
+`configurations` 是有序数组，数组顺序决定生成的代理分组顺序。每个配置分组默认会生成 `<分组名>-UrlTest` 和 `<分组名>` 两个 proxy group。`enableUrlTest` 设为 `false` 时只生成 `<分组名>` select，节点、`DIRECT` 和插入项会直接加入该 select。`includeDirect` 会把 `DIRECT` 插入到 select 分组中。
+
+`includeGroups` 是有序插入条目数组。`mode: "proxy"` 会把目标分组作为一个代理节点插入；`mode: "flatten"` 会把目标配置分组来源中的代理展开到当前分组列表。展开模式只能选择其他 `configurations` 分组，模板中的 proxy group 和 `DIRECT` / `REJECT` 只能使用 `proxy` 模式。旧版 `includeGroups: ["Common"]` 会在服务启动时迁移为 `[{"name":"Common","mode":"proxy"}]`。
 
 `cacheDurationSeconds` 控制订阅缓存时长，单位秒；`0` 或缺省表示每次下载订阅时实时生成。
 

@@ -737,6 +737,41 @@ func TestConfigGroupUnmarshalLegacyArray(t *testing.T) {
 	}
 }
 
+func TestIncludeGroupUnmarshalLegacyString(t *testing.T) {
+	var rule MergeRule
+	if err := json.Unmarshal([]byte(`{
+		"template": "template.yaml",
+		"configurations": [{
+			"name": "Auto",
+			"includeGroups": ["Common", {"name": "Other", "mode": "flatten"}]
+		}]
+	}`), &rule); err != nil {
+		t.Fatalf("unmarshal include groups: %v", err)
+	}
+
+	includes := rule.Configurations[0].IncludeGroups
+	if len(includes) != 2 {
+		t.Fatalf("include groups = %#v", includes)
+	}
+	if includes[0] != (IncludeGroup{Name: "Common", Mode: IncludeGroupModeProxy}) {
+		t.Fatalf("legacy include group = %#v", includes[0])
+	}
+	if includes[1] != (IncludeGroup{Name: "Other", Mode: IncludeGroupModeFlatten}) {
+		t.Fatalf("new include group = %#v", includes[1])
+	}
+
+	data, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatalf("marshal include groups: %v", err)
+	}
+	if strings.Contains(string(data), `"includeGroups":["Common"`) {
+		t.Fatalf("legacy include group was not normalized: %s", data)
+	}
+	if !strings.Contains(string(data), `"includeGroups":[{"name":"Common","mode":"proxy"}`) {
+		t.Fatalf("normalized include group missing: %s", data)
+	}
+}
+
 func TestConfigGroupsPreserveJSONOrder(t *testing.T) {
 	var rule MergeRule
 	if err := json.Unmarshal([]byte(`{
@@ -839,7 +874,7 @@ proxies:
 				Name:          "Auto",
 				Sources:       []ConfigSource{{Path: proxyFile}},
 				IncludeDirect: true,
-				IncludeGroups: []string{"TemplateGroup", "Other"},
+				IncludeGroups: []IncludeGroup{{Name: "TemplateGroup"}, {Name: "Other"}},
 			},
 			{Name: "Other"},
 		},
@@ -863,6 +898,58 @@ proxies:
 		t.Fatalf("Auto proxies type = %T", auto["proxies"])
 	}
 	want := []string{"Auto-UrlTest", "DIRECT", "TemplateGroup", "Other", "Include-Proxy"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Auto proxies = %#v, want %#v", got, want)
+	}
+}
+
+func TestMergeGroupIncludesFlattenedConfigurationProxies(t *testing.T) {
+	dir := t.TempDir()
+	templateFile := filepath.Join(dir, "template.yaml")
+	if err := os.WriteFile(templateFile, []byte("proxy-groups: []\nrules: []\n"), 0644); err != nil {
+		t.Fatalf("write template fixture: %v", err)
+	}
+	autoFile := filepath.Join(dir, "auto.yaml")
+	if err := os.WriteFile(autoFile, []byte(`
+proxies:
+  - name: Auto-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+`), 0644); err != nil {
+		t.Fatalf("write auto fixture: %v", err)
+	}
+	commonFile := filepath.Join(dir, "common.yaml")
+	if err := os.WriteFile(commonFile, []byte(`
+proxies:
+  - name: Common-Proxy
+    type: socks5
+    server: 127.0.0.1
+    port: 1081
+`), 0644); err != nil {
+		t.Fatalf("write common fixture: %v", err)
+	}
+
+	cfg, err := Merge(MergeRule{
+		Template: templateFile,
+		Configurations: ConfigGroups{
+			{
+				Name:          "Auto",
+				Sources:       []ConfigSource{{Path: autoFile}},
+				IncludeGroups: []IncludeGroup{{Name: "Common", Mode: IncludeGroupModeFlatten}},
+			},
+			{
+				Name:    "Common",
+				Sources: []ConfigSource{{Path: commonFile}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("merge flattened group: %v", err)
+	}
+
+	got := proxyGroupNames(t, cfg, "Auto")
+	want := []string{"Auto-UrlTest", "Common-Proxy", "Auto-Proxy"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Auto proxies = %#v, want %#v", got, want)
 	}
@@ -901,7 +988,7 @@ proxies:
 				Name:          "Auto",
 				Sources:       []ConfigSource{{Path: proxyFile}},
 				IncludeDirect: true,
-				IncludeGroups: []string{"TemplateGroup", "Other"},
+				IncludeGroups: []IncludeGroup{{Name: "TemplateGroup"}, {Name: "Other"}},
 				EnableURLTest: &disabled,
 			},
 			{Name: "Other"},
@@ -936,23 +1023,30 @@ func TestMergeRejectsInvalidGroupIncludes(t *testing.T) {
 		{
 			name: "empty",
 			groups: ConfigGroups{
-				{Name: "Auto", IncludeGroups: []string{""}},
+				{Name: "Auto", IncludeGroups: []IncludeGroup{{Name: ""}}},
 			},
 			want: "empty proxy group name",
 		},
 		{
 			name: "self",
 			groups: ConfigGroups{
-				{Name: "Auto", IncludeGroups: []string{"Auto"}},
+				{Name: "Auto", IncludeGroups: []IncludeGroup{{Name: "Auto"}}},
 			},
 			want: "cannot include itself",
 		},
 		{
 			name: "missing",
 			groups: ConfigGroups{
-				{Name: "Auto", IncludeGroups: []string{"Missing"}},
+				{Name: "Auto", IncludeGroups: []IncludeGroup{{Name: "Missing"}}},
 			},
 			want: "unknown proxy group",
+		},
+		{
+			name: "flatten builtin",
+			groups: ConfigGroups{
+				{Name: "Auto", IncludeGroups: []IncludeGroup{{Name: "DIRECT", Mode: IncludeGroupModeFlatten}}},
+			},
+			want: "can only flatten another configuration group",
 		},
 	}
 

@@ -7,11 +7,18 @@ export interface ConfigSource {
   cmd?: string;
 }
 
+export type IncludeGroupMode = "proxy" | "flatten";
+
+export interface IncludeGroup {
+  name: string;
+  mode: IncludeGroupMode;
+}
+
 export interface ConfigGroup {
   name: string;
   sources?: ConfigSource[];
   includeDirect?: boolean;
-  includeGroups?: string[];
+  includeGroups?: IncludeGroup[];
   enableUrlTest?: boolean;
 }
 

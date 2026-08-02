@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,9 +23,16 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { updateConfig } from "@/api/configs";
-import type { ConfigGroup, ConfigSource, MergeRule } from "@/api/types";
+import { listProxyGroupTargets } from "@/api/ruleGroups";
+import type {
+  ConfigGroup,
+  ConfigSource,
+  IncludeGroupMode,
+  MergeRule,
+} from "@/api/types";
 
 type SourceKind = "path" | "url" | "cmd";
+const EMPTY_SELECT_VALUE = "__empty";
 
 let draftKey = 0;
 const nextDraftKey = () => `draft-${draftKey++}`;
@@ -36,11 +43,17 @@ interface SourceDraft {
   value: string;
 }
 
+interface IncludeGroupDraft {
+  key: string;
+  name: string;
+  mode: IncludeGroupMode;
+}
+
 interface GroupDraft {
   key: string;
   name: string;
   includeDirect: boolean;
-  includeGroups: string;
+  includeGroups: IncludeGroupDraft[];
   enableUrlTest: boolean;
   sources: SourceDraft[];
 }
@@ -63,22 +76,25 @@ function draftToSource(draft: SourceDraft): ConfigSource {
   }
 }
 
+function includeGroupToDraft(
+  include: { name: string; mode?: IncludeGroupMode },
+): IncludeGroupDraft {
+  return {
+    key: nextDraftKey(),
+    name: include.name,
+    mode: include.mode === "flatten" ? "flatten" : "proxy",
+  };
+}
+
 function ruleToDrafts(rule: MergeRule): GroupDraft[] {
   return (rule.configurations ?? []).map((group) => ({
     key: nextDraftKey(),
     name: group.name,
     includeDirect: group.includeDirect ?? false,
-    includeGroups: (group.includeGroups ?? []).join(", "),
+    includeGroups: (group.includeGroups ?? []).map(includeGroupToDraft),
     enableUrlTest: group.enableUrlTest ?? true,
     sources: (group.sources ?? []).map(sourceToDraft),
   }));
-}
-
-function parseIncludeGroups(value: string): string[] {
-  return value
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean);
 }
 
 function draftsToConfigurations(drafts: GroupDraft[]): ConfigGroup[] {
@@ -88,7 +104,10 @@ function draftsToConfigurations(drafts: GroupDraft[]): ConfigGroup[] {
       name: draft.name.trim(),
       sources: draft.sources.map(draftToSource),
       includeDirect: draft.includeDirect,
-      includeGroups: parseIncludeGroups(draft.includeGroups),
+      includeGroups: draft.includeGroups.map((include) => ({
+        name: include.name.trim(),
+        mode: include.mode,
+      })),
       enableUrlTest: draft.enableUrlTest,
     }));
 }
@@ -98,9 +117,16 @@ function normalizeConfigurations(groups: ConfigGroup[]): ConfigGroup[] {
     name: group.name,
     sources: group.sources ?? [],
     includeDirect: group.includeDirect ?? false,
-    includeGroups: group.includeGroups ?? [],
+    includeGroups: (group.includeGroups ?? []).map((include) => ({
+      name: include.name,
+      mode: include.mode === "flatten" ? "flatten" : "proxy",
+    })),
     enableUrlTest: group.enableUrlTest ?? true,
   }));
+}
+
+function uniqueNames(names: string[]): string[] {
+  return Array.from(new Set(names.filter((name) => name.trim())));
 }
 
 interface SourcesTabProps {
@@ -112,6 +138,11 @@ interface SourcesTabProps {
 export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const targetsQuery = useQuery({
+    queryKey: ["configs", id, "proxy-group-targets"],
+    queryFn: ({ signal }) => listProxyGroupTargets(id, signal),
+    enabled: Boolean(id),
+  });
   const [drafts, setDrafts] = useState<GroupDraft[]>(() => ruleToDrafts(rule));
   const [newGroupName, setNewGroupName] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
@@ -121,6 +152,16 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
   const isDirty =
     JSON.stringify(draftsToConfigurations(drafts)) !==
     JSON.stringify(normalizeConfigurations(rule.configurations ?? []));
+  const configurationNames = uniqueNames(drafts.map((group) => group.name));
+  const proxyTargets = uniqueNames([
+    "DIRECT",
+    "REJECT",
+    ...(targetsQuery.data ?? []),
+    ...drafts.flatMap((group) => {
+      const name = group.name.trim();
+      return name && group.enableUrlTest ? [name, `${name}-UrlTest`] : name ? [name] : [];
+    }),
+  ]);
 
   useEffect(() => {
     onDirtyChange?.(isDirty);
@@ -186,7 +227,7 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
         key,
         name,
         includeDirect: false,
-        includeGroups: "",
+        includeGroups: [],
         enableUrlTest: true,
         sources: [],
       },
@@ -199,6 +240,111 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
     const group = drafts[groupIndex];
     const source = { key: nextDraftKey(), kind: "path" as const, value: "" };
     updateGroup(groupIndex, { ...group, sources: [...group.sources, source] });
+  };
+
+  const renameGroup = (groupIndex: number, name: string) => {
+    const previousName = drafts[groupIndex]?.name.trim();
+    const previousURLTestName = previousName ? `${previousName}-UrlTest` : "";
+    const nextURLTestName = name.trim() ? `${name.trim()}-UrlTest` : "";
+    setDrafts((previous) =>
+      previous.map((group, index) => {
+        if (index === groupIndex) return { ...group, name };
+        if (!previousName) return group;
+        return {
+          ...group,
+          includeGroups: group.includeGroups.map((include) => {
+            if (include.name === previousName) {
+              return { ...include, name: name.trim() };
+            }
+            if (include.name === previousURLTestName) {
+              return { ...include, name: nextURLTestName };
+            }
+            return include;
+          }),
+        };
+      }),
+    );
+  };
+
+  const includeTargets = (groupIndex: number, include: IncludeGroupDraft) => {
+    const targets =
+      include.mode === "flatten"
+        ? uniqueNames(
+            drafts
+              .filter((_, index) => index !== groupIndex)
+              .map((group) => group.name),
+          )
+        : proxyTargets.filter(
+            (target) => target !== drafts[groupIndex]?.name.trim(),
+          );
+    return include.name && !targets.includes(include.name)
+      ? uniqueNames([...targets, include.name])
+      : targets;
+  };
+
+  const addIncludeGroup = (groupIndex: number) => {
+    const group = drafts[groupIndex];
+    const firstTarget = proxyTargets.find((target) => target !== group.name.trim()) ?? "";
+    updateGroup(groupIndex, {
+      ...group,
+      includeGroups: [
+        ...group.includeGroups,
+        { key: nextDraftKey(), name: firstTarget, mode: "proxy" },
+      ],
+    });
+  };
+
+  const updateIncludeGroup = (
+    groupIndex: number,
+    includeIndex: number,
+    next: IncludeGroupDraft,
+  ) => {
+    const group = drafts[groupIndex];
+    updateGroup(groupIndex, {
+      ...group,
+      includeGroups: group.includeGroups.map((include, index) =>
+        index === includeIndex ? next : include,
+      ),
+    });
+  };
+
+  const moveIncludeGroup = (
+    groupIndex: number,
+    includeIndex: number,
+    direction: -1 | 1,
+  ) => {
+    const group = drafts[groupIndex];
+    const target = includeIndex + direction;
+    if (target < 0 || target >= group.includeGroups.length) return;
+    const includeGroups = [...group.includeGroups];
+    [includeGroups[includeIndex], includeGroups[target]] = [
+      includeGroups[target],
+      includeGroups[includeIndex],
+    ];
+    updateGroup(groupIndex, { ...group, includeGroups });
+  };
+
+  const saveSources = () => {
+    const configurations = draftsToConfigurations(drafts);
+    const names = new Set(configurations.map((group) => group.name));
+    for (const group of configurations) {
+      for (const include of group.includeGroups ?? []) {
+        if (!include.name) {
+          setError(t("sources.includeGroupRequired"));
+          return;
+        }
+        if (include.name === group.name) {
+          setError(t("sources.includeGroupSelf"));
+          return;
+        }
+        if (include.mode === "flatten" && !names.has(include.name)) {
+          setError(t("sources.includeGroupFlattenInvalid"));
+          return;
+        }
+      }
+    }
+    setError("");
+    mutation.mutate();
   };
 
   const toggleGroup = (key: string) => {
@@ -269,7 +415,7 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
         <Button
           type="button"
           className="sm:ml-auto"
-          onClick={() => mutation.mutate()}
+          onClick={saveSources}
           disabled={mutation.isPending}
           aria-busy={mutation.isPending}
         >
@@ -319,10 +465,7 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
                   name={`configurations.${groupIndex}.name`}
                   value={group.name}
                   onChange={(event) =>
-                    updateGroup(groupIndex, {
-                      ...group,
-                      name: event.target.value,
-                    })
+                    renameGroup(groupIndex, event.target.value)
                   }
                   aria-label={t("sources.groupName")}
                   autoComplete="off"
@@ -555,24 +698,206 @@ export function SourcesTab({ id, rule, onDirtyChange }: SourcesTabProps) {
                         />
                         <span>{t("sources.enableUrlTest")}</span>
                       </label>
-                      <div className="space-y-1 sm:col-span-2">
-                        <Label htmlFor={`group-${group.key}-include-groups`}>
-                          {t("sources.includeGroups")}
-                        </Label>
-                        <Input
-                          id={`group-${group.key}-include-groups`}
-                          name={`configurations.${groupIndex}.includeGroups`}
-                          value={group.includeGroups}
-                          onChange={(event) =>
-                            updateGroup(groupIndex, {
-                              ...group,
-                              includeGroups: event.target.value,
-                            })
-                          }
-                          placeholder={t("sources.includeGroupsPlaceholder")}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
+                      <div className="space-y-2 sm:col-span-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label>{t("sources.includeGroups")}</Label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title={t("sources.addIncludeGroup")}
+                            aria-label={t("sources.addIncludeGroup")}
+                            onClick={() => addIncludeGroup(groupIndex)}
+                          >
+                            <Plus className="h-4 w-4" aria-hidden />
+                          </Button>
+                        </div>
+                        {group.includeGroups.length === 0 ? (
+                          <p className="py-2 text-sm text-muted-foreground">
+                            {t("sources.includeGroupsEmpty")}
+                          </p>
+                        ) : (
+                          <div className="divide-y border-y">
+                            {group.includeGroups.map((include, includeIndex) => {
+                              const targetOptions = includeTargets(
+                                groupIndex,
+                                include,
+                              );
+                              return (
+                                <div
+                                  key={include.key}
+                                  className="grid gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end"
+                                >
+                                  <div className="space-y-1">
+                                    <Label
+                                      htmlFor={`group-${group.key}-include-${include.key}-name`}
+                                    >
+                                      {t("sources.includeGroupName")}
+                                    </Label>
+                                    <Select
+                                      value={
+                                        include.name || EMPTY_SELECT_VALUE
+                                      }
+                                      onValueChange={(value) =>
+                                        updateIncludeGroup(
+                                          groupIndex,
+                                          includeIndex,
+                                          {
+                                            ...include,
+                                            name:
+                                              value === EMPTY_SELECT_VALUE
+                                                ? ""
+                                                : value,
+                                          },
+                                        )
+                                      }
+                                    >
+                                      <SelectTrigger
+                                        id={`group-${group.key}-include-${include.key}-name`}
+                                        name={`configurations.${groupIndex}.includeGroups.${includeIndex}.name`}
+                                      >
+                                        <SelectValue
+                                          placeholder={t(
+                                            "sources.includeGroupSelect",
+                                          )}
+                                        />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value={EMPTY_SELECT_VALUE}>
+                                          {t("sources.includeGroupSelect")}
+                                        </SelectItem>
+                                        {targetOptions.map((target) => (
+                                          <SelectItem
+                                            key={target}
+                                            value={target}
+                                          >
+                                            {target}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label
+                                      htmlFor={`group-${group.key}-include-${include.key}-mode`}
+                                    >
+                                      {t("sources.includeGroupMode")}
+                                    </Label>
+                                    <Select
+                                      value={include.mode}
+                                      onValueChange={(value) => {
+                                        const mode = value as IncludeGroupMode;
+                                        const next = { ...include, mode };
+                                        const nextTargets = includeTargets(
+                                          groupIndex,
+                                          next,
+                                        );
+                                        updateIncludeGroup(
+                                          groupIndex,
+                                          includeIndex,
+                                          {
+                                            ...next,
+                                            name: nextTargets.includes(
+                                              next.name,
+                                            )
+                                              ? next.name
+                                              : nextTargets[0] ?? "",
+                                          },
+                                        );
+                                      }}
+                                    >
+                                      <SelectTrigger
+                                        id={`group-${group.key}-include-${include.key}-mode`}
+                                        name={`configurations.${groupIndex}.includeGroups.${includeIndex}.mode`}
+                                      >
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="proxy">
+                                          {t("sources.includeGroupProxy")}
+                                        </SelectItem>
+                                        <SelectItem
+                                          value="flatten"
+                                          disabled={
+                                            configurationNames.length <= 1
+                                          }
+                                        >
+                                          {t("sources.includeGroupFlatten")}
+                                        </SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="flex justify-end gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      title={t("sources.moveUp")}
+                                      aria-label={t("sources.moveUp")}
+                                      onClick={() =>
+                                        moveIncludeGroup(
+                                          groupIndex,
+                                          includeIndex,
+                                          -1,
+                                        )
+                                      }
+                                      disabled={includeIndex === 0}
+                                    >
+                                      <ArrowUp
+                                        className="h-3.5 w-3.5"
+                                        aria-hidden
+                                      />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      title={t("sources.moveDown")}
+                                      aria-label={t("sources.moveDown")}
+                                      onClick={() =>
+                                        moveIncludeGroup(
+                                          groupIndex,
+                                          includeIndex,
+                                          1,
+                                        )
+                                      }
+                                      disabled={
+                                        includeIndex ===
+                                        group.includeGroups.length - 1
+                                      }
+                                    >
+                                      <ArrowDown
+                                        className="h-3.5 w-3.5"
+                                        aria-hidden
+                                      />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      title={t("common.delete")}
+                                      aria-label={t("common.delete")}
+                                      onClick={() =>
+                                        updateGroup(groupIndex, {
+                                          ...group,
+                                          includeGroups:
+                                            group.includeGroups.filter(
+                                              (_, index) => index !== includeIndex,
+                                            ),
+                                        })
+                                      }
+                                    >
+                                      <Trash2
+                                        className="h-3.5 w-3.5"
+                                        aria-hidden
+                                      />
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </TabsContent>

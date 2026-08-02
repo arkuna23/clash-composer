@@ -301,6 +301,43 @@ func TestHTTPAPINormalizesLegacyConfigurationGroups(t *testing.T) {
 	}
 }
 
+func TestHTTPAPIMigratesLegacyConfigurationFormatsOnStartup(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "template.yaml", "rules: []\n")
+	writeTestFile(t, dir, "demo.json", `{
+  "template": "template.yaml",
+  "configurations": {
+    "Legacy": [
+      {"path": "legacy.yaml"}
+    ],
+    "Auto": {
+      "sources": [],
+      "includeGroups": ["Legacy"]
+    }
+  }
+}
+`)
+
+	if _, _, err := newHTTPAPI(ServeOptions{ConfigDir: dir, Token: testAPIToken}); err != nil {
+		t.Fatalf("new api: %v", err)
+	}
+
+	migrated, err := os.ReadFile(filepath.Join(dir, "demo.json"))
+	if err != nil {
+		t.Fatalf("read migrated config: %v", err)
+	}
+	text := string(migrated)
+	if !strings.Contains(text, `"configurations": [`) {
+		t.Fatalf("configurations were not migrated: %s", text)
+	}
+	if !strings.Contains(text, `"includeGroups": [
+        {
+          "name": "Legacy",
+          "mode": "proxy"`) {
+		t.Fatalf("include group was not migrated: %s", text)
+	}
+}
+
 func TestHTTPAPIRejectsInvalidGroupIncludes(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "template.yaml", "rules: []\n")
@@ -309,7 +346,7 @@ func TestHTTPAPIRejectsInvalidGroupIncludes(t *testing.T) {
 	rule := MergeRule{
 		Template: "template.yaml",
 		Configurations: ConfigGroups{
-			{Name: "Auto", IncludeGroups: []string{"Missing"}},
+			{Name: "Auto", IncludeGroups: []IncludeGroup{{Name: "Missing"}}},
 		},
 	}
 

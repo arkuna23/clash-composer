@@ -29,11 +29,62 @@ type MergeRule struct {
 
 type ConfigGroups []ConfigGroup
 
+type IncludeGroupMode string
+
+const (
+	IncludeGroupModeProxy   IncludeGroupMode = "proxy"
+	IncludeGroupModeFlatten IncludeGroupMode = "flatten"
+)
+
+type IncludeGroup struct {
+	Name string           `json:"name"`
+	Mode IncludeGroupMode `json:"mode"`
+}
+
+func (g *IncludeGroup) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return fmt.Errorf("include group must be a string or object")
+	}
+
+	if data[0] == '"' {
+		var name string
+		if err := json.Unmarshal(data, &name); err != nil {
+			return err
+		}
+		*g = IncludeGroup{Name: name, Mode: IncludeGroupModeProxy}
+		return nil
+	}
+
+	type includeGroup IncludeGroup
+	var next includeGroup
+	if err := json.Unmarshal(data, &next); err != nil {
+		return err
+	}
+	*g = IncludeGroup(next)
+	if g.Mode == "" {
+		g.Mode = IncludeGroupModeProxy
+	}
+	return nil
+}
+
+func (g IncludeGroup) MarshalJSON() ([]byte, error) {
+	mode := g.Mode
+	if mode == "" {
+		mode = IncludeGroupModeProxy
+	}
+	type includeGroup struct {
+		Name string           `json:"name"`
+		Mode IncludeGroupMode `json:"mode"`
+	}
+	return json.Marshal(includeGroup{Name: g.Name, Mode: mode})
+}
+
 type ConfigGroup struct {
 	Name          string         `json:"name"`
 	Sources       []ConfigSource `json:"sources,omitempty"`
 	IncludeDirect bool           `json:"includeDirect,omitempty"`
-	IncludeGroups []string       `json:"includeGroups,omitempty"`
+	IncludeGroups []IncludeGroup `json:"includeGroups,omitempty"`
 	EnableURLTest *bool          `json:"enableUrlTest,omitempty"`
 }
 
@@ -159,8 +210,7 @@ func proxyName(proxy map[string]any) (string, error) {
 	return name, nil
 }
 
-func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup, configs []*config.RawConfig) error {
-	log.Printf("append proxy group start: group=%q sources=%d", name, len(configs))
+func proxyNamesFromConfigs(configs []*config.RawConfig) ([]string, error) {
 	length := 0
 	for _, cfg := range configs {
 		length += len(cfg.Proxy)
@@ -172,7 +222,7 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 		for _, proxy := range cfg.Proxy {
 			name, err := proxyName(proxy)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if seen[name] {
 				continue
@@ -180,6 +230,16 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 			seen[name] = true
 			proxies = append(proxies, name)
 		}
+	}
+	return proxies, nil
+}
+
+func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup, configs []*config.RawConfig, configurationProxies map[string][]string) error {
+	log.Printf("append proxy group start: group=%q sources=%d", name, len(configs))
+
+	proxies, err := proxyNamesFromConfigs(configs)
+	if err != nil {
+		return err
 	}
 	urlTestEnabled := group.urlTestEnabled()
 	if urlTestEnabled {
@@ -193,13 +253,26 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 		})
 	}
 
-	includes := proxyGroupIncludes(group)
-	proxiesSelect := make([]string, 0, len(proxies)+len(includes)+1)
-	if urlTestEnabled {
-		proxiesSelect = append(proxiesSelect, name+"-UrlTest")
+	includes, err := proxyGroupIncludes(group, configurationProxies)
+	if err != nil {
+		return err
 	}
-	proxiesSelect = append(proxiesSelect, includes...)
-	proxiesSelect = append(proxiesSelect, proxies...)
+	proxiesSelect := make([]string, 0, len(proxies)+len(includes)+1)
+	selectSeen := map[string]bool{}
+	appendSelect := func(values ...string) {
+		for _, value := range values {
+			if value == "" || selectSeen[value] {
+				continue
+			}
+			selectSeen[value] = true
+			proxiesSelect = append(proxiesSelect, value)
+		}
+	}
+	if urlTestEnabled {
+		appendSelect(name + "-UrlTest")
+	}
+	appendSelect(includes...)
+	appendSelect(proxies...)
 	template.ProxyGroup = append(template.ProxyGroup, map[string]any{
 		"name":    name,
 		"type":    "select",
@@ -210,22 +283,44 @@ func appendProxyGroup(template *config.RawConfig, name string, group ConfigGroup
 	return nil
 }
 
-func proxyGroupIncludes(group ConfigGroup) []string {
+func proxyGroupIncludes(group ConfigGroup, configurationProxies map[string][]string) ([]string, error) {
 	includes := []string{}
 	seen := map[string]bool{}
-	if group.IncludeDirect {
-		includes = append(includes, "DIRECT")
-		seen["DIRECT"] = true
-	}
-	for _, name := range group.IncludeGroups {
-		name = strings.TrimSpace(name)
-		if name == "" || seen[name] {
-			continue
+	appendUnique := func(values ...string) {
+		for _, name := range values {
+			if name == "" || seen[name] {
+				continue
+			}
+			includes = append(includes, name)
+			seen[name] = true
 		}
-		includes = append(includes, name)
-		seen[name] = true
 	}
-	return includes
+	if group.IncludeDirect {
+		appendUnique("DIRECT")
+	}
+	for _, include := range group.IncludeGroups {
+		name := strings.TrimSpace(include.Name)
+		switch includeMode(include) {
+		case IncludeGroupModeProxy:
+			appendUnique(name)
+		case IncludeGroupModeFlatten:
+			proxies, ok := configurationProxies[name]
+			if !ok {
+				return nil, fmt.Errorf("configuration group %q can only flatten another configuration group, got %q", group.Name, name)
+			}
+			appendUnique(proxies...)
+		default:
+			return nil, fmt.Errorf("configuration group %q has invalid include mode %q", group.Name, include.Mode)
+		}
+	}
+	return includes, nil
+}
+
+func includeMode(include IncludeGroup) IncludeGroupMode {
+	if include.Mode == "" {
+		return IncludeGroupModeProxy
+	}
+	return include.Mode
 }
 
 func Merge(rule MergeRule) (*config.RawConfig, error) {
@@ -287,9 +382,20 @@ func MergeWithOptions(rule MergeRule, options MergeOptions) (*config.RawConfig, 
 		}
 	}
 
+	configurationProxies := make(map[string][]string, len(configurations))
 	for i, cfg := range configurations {
 		group := rule.Configurations[i]
-		if err := appendProxyGroup(newConfig, group.Name, group, cfg); err != nil {
+		proxies, err := proxyNamesFromConfigs(cfg)
+		if err != nil {
+			log.Printf("collect configuration proxies failed: group=%q err=%v", group.Name, err)
+			return nil, err
+		}
+		configurationProxies[group.Name] = proxies
+	}
+
+	for i, cfg := range configurations {
+		group := rule.Configurations[i]
+		if err := appendProxyGroup(newConfig, group.Name, group, cfg, configurationProxies); err != nil {
 			log.Printf("append proxy group failed: group=%q err=%v", group.Name, err)
 			return nil, err
 		}
@@ -325,8 +431,13 @@ func validateGroupIncludes(groups ConfigGroups, templateGroups []map[string]any)
 		"DIRECT": true,
 		"REJECT": true,
 	}
+	configurationGroupNames := make(map[string]bool, len(groups))
 	for _, group := range groups {
 		available[group.Name] = true
+		configurationGroupNames[group.Name] = true
+		if group.urlTestEnabled() {
+			available[group.Name+"-UrlTest"] = true
+		}
 	}
 	for _, group := range templateGroups {
 		if name, ok := group["name"].(string); ok && strings.TrimSpace(name) != "" {
@@ -337,15 +448,24 @@ func validateGroupIncludes(groups ConfigGroups, templateGroups []map[string]any)
 	for _, group := range groups {
 		groupName := group.Name
 		for _, include := range group.IncludeGroups {
-			include = strings.TrimSpace(include)
-			if include == "" {
+			name := strings.TrimSpace(include.Name)
+			if name == "" {
 				return fmt.Errorf("configuration group %q includes an empty proxy group name", groupName)
 			}
-			if include == groupName {
+			if name == groupName {
 				return fmt.Errorf("configuration group %q cannot include itself", groupName)
 			}
-			if !available[include] {
-				return fmt.Errorf("configuration group %q includes unknown proxy group %q", groupName, include)
+			switch includeMode(include) {
+			case IncludeGroupModeProxy:
+				if !available[name] {
+					return fmt.Errorf("configuration group %q includes unknown proxy group %q", groupName, name)
+				}
+			case IncludeGroupModeFlatten:
+				if !configurationGroupNames[name] {
+					return fmt.Errorf("configuration group %q can only flatten another configuration group, got %q", groupName, name)
+				}
+			default:
+				return fmt.Errorf("configuration group %q has invalid include mode %q", groupName, include.Mode)
 			}
 		}
 	}

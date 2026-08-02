@@ -89,12 +89,133 @@ func newHTTPAPI(options ServeOptions) (*httpAPI, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve config dir symlinks: %w", err)
 	}
+	if err := migrateConfigFiles(realConfigDir); err != nil {
+		return nil, "", err
+	}
 
 	return &httpAPI{
 		configDir: realConfigDir,
 		token:     token,
 		webappFS:  options.WebappFS,
 	}, addr, nil
+}
+
+func migrateConfigFiles(configDir string) error {
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return fmt.Errorf("list config files for migration: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if validateConfigID(id) != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat config %q for migration: %w", id, err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+
+		path := filepath.Join(configDir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read config %q for migration: %w", id, err)
+		}
+		needsMigration, err := mergeRuleNeedsMigration(data)
+		if err != nil {
+			log.Printf("skip config migration: id=%q err=%v", id, err)
+			continue
+		}
+		if !needsMigration {
+			continue
+		}
+
+		var rule MergeRule
+		if err := json.Unmarshal(data, &rule); err != nil {
+			log.Printf("skip config migration: id=%q err=%v", id, err)
+			continue
+		}
+		normalized, err := json.MarshalIndent(rule, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal migrated config %q: %w", id, err)
+		}
+		normalized = append(normalized, '\n')
+		if err := writeFileAtomic(path, normalized, 0600); err != nil {
+			return fmt.Errorf("write migrated config %q: %w", id, err)
+		}
+		log.Printf("migrated config: id=%q", id)
+	}
+	return nil
+}
+
+func mergeRuleNeedsMigration(data []byte) (bool, error) {
+	var raw struct {
+		Configurations json.RawMessage `json:"configurations"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false, err
+	}
+
+	configurations := bytes.TrimSpace(raw.Configurations)
+	if len(configurations) == 0 || bytes.Equal(configurations, []byte("null")) {
+		return false, nil
+	}
+	if configurations[0] == '{' {
+		return true, nil
+	}
+	if configurations[0] != '[' {
+		return false, nil
+	}
+
+	var groups []json.RawMessage
+	if err := json.Unmarshal(configurations, &groups); err != nil {
+		return false, err
+	}
+	for _, groupData := range groups {
+		groupData = bytes.TrimSpace(groupData)
+		if len(groupData) == 0 || groupData[0] == '[' {
+			return true, nil
+		}
+		if groupData[0] != '{' {
+			continue
+		}
+
+		var group map[string]json.RawMessage
+		if err := json.Unmarshal(groupData, &group); err != nil {
+			return false, err
+		}
+		includeData, ok := group["includeGroups"]
+		if !ok || bytes.Equal(bytes.TrimSpace(includeData), []byte("null")) {
+			continue
+		}
+		var includes []json.RawMessage
+		if err := json.Unmarshal(includeData, &includes); err != nil {
+			return false, err
+		}
+		for _, includeData := range includes {
+			includeData = bytes.TrimSpace(includeData)
+			if len(includeData) == 0 || includeData[0] == '"' {
+				return true, nil
+			}
+			if includeData[0] != '{' {
+				continue
+			}
+			var include map[string]json.RawMessage
+			if err := json.Unmarshal(includeData, &include); err != nil {
+				return false, err
+			}
+			if _, ok := include["mode"]; !ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (api *httpAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
