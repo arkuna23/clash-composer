@@ -1,0 +1,74 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+proxy-groups:
+  - name: Template-Fallback
+    type: select
+    proxies:
+      - DIRECT
+      - REJECT
+
+  - name: Template-UrlTest
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+      - DIRECT
+
+rule-providers:
+  dev-local:
+    type: file
+    behavior: domain
+    path: ./ruleset/dev-local.yaml
+
+  dev-remote:
+    type: http
+    behavior: domain
+    url: http://127.0.0.1:8091/sources/rules.yaml
+    path: ./ruleset/dev-remote.yaml
+    interval: 86400
+
+rules:
+  - RULE-SET,dev-local,DIRECT
+
+  # all-rule-types
+  - DOMAIN,domain.example,Primary
+  - DOMAIN-SUFFIX,suffix.example,Primary
+  - DOMAIN-KEYWORD,keyword,Primary
+  - DOMAIN-WILDCARD,*.wildcard.example,Primary
+  - DOMAIN-REGEX,^api[.]dev[.]example$,Primary
+  - GEOSITE,private,DIRECT
+  - IP-CIDR,192.0.2.0/24,Primary
+  - IP-CIDR6,2001:db8::/32,Primary
+  - IP-SUFFIX,192.0.2.1/24,Primary
+  - IP-ASN,13335,Primary
+  - GEOIP,CN,DIRECT
+  - SRC-GEOIP,CN,Primary
+  - SRC-IP-ASN,9808,Primary
+  - SRC-IP-CIDR,192.168.1.0/24,Primary
+  - SRC-IP-SUFFIX,192.168.1.201/8,Primary
+  - DST-PORT,443,Primary
+  - SRC-PORT,7777,Primary
+  - IN-PORT,7890,Primary
+  - IN-TYPE,SOCKS,Primary
+  - IN-USER,dev,Primary
+  - IN-NAME,mixed-in,Primary
+  - PROCESS-PATH,/usr/bin/curl,Primary
+  - PROCESS-PATH-WILDCARD,/usr/*/curl,Primary
+  - PROCESS-PATH-REGEX,.*bin/curl,Primary
+  - PROCESS-NAME,curl,Primary
+  - PROCESS-NAME-WILDCARD,*browser*,Primary
+  - PROCESS-NAME-REGEX,(?i)browser,Primary
+  - UID,1001,Primary
+  - NETWORK,udp,Primary
+  - DSCP,4,Primary
+  - RULE-SET,dev-remote,Primary
+  - AND,((DOMAIN,and.example),(NETWORK,UDP)),Primary
+  - OR,((NETWORK,UDP),(DOMAIN,or.example)),Primary
+  - NOT,((DOMAIN,not.example)),Primary
+  - SUB-RULE,(NETWORK,tcp),Primary
+  - MATCH,DIRECT

@@ -1,0 +1,15 @@
+proxies:
+  - name: Dev-Path
+    type: ss
+    server: path.dev.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: change-me
+    udp: true
+
+  - name: Dev-Duplicate
+    type: http
+    server: duplicate-path.dev.example.com
+    port: 8080
+    username: dev
+    password: change-me

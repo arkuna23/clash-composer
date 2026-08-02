@@ -1,0 +1,6 @@
+proxies:
+  - name: Dev-Replace
+    type: socks5
+    server: replace.dev.example.com
+    port: 1080
+    udp: true

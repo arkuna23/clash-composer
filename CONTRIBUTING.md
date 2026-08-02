@@ -38,7 +38,11 @@ make distclean   # 额外删除 Web UI 构建产物和依赖
 make dev
 ```
 
-该命令会构建后端、启动 `serve`，再启动 Vite。默认后端为 `127.0.0.1:8080`，配置目录为 `./configs`，token 为 `dev`；Web UI 位于 `http://127.0.0.1:5173/`。可覆盖这些变量：
+该命令会在空的配置目录中填充 `example/dev/` 样例，启动后端和本地 URL fixture，再启动 Vite。已有配置目录不会被覆盖。默认后端为 `127.0.0.1:8080`，配置目录为 `./configs`，token 为 `dev`；Web UI 位于 `http://127.0.0.1:5173/`。样例 URL 来源使用本机 `127.0.0.1:8091` 的 fixture 服务，不依赖公网。
+
+样例包含两个配置条目、`path`/`url`/`cmd` 三种来源、DIRECT、proxy/flatten 插入、启用和关闭 URLTest、缓存、两种 ruleset 策略、模板 rule-providers、模板 proxy groups 以及规则类型示例。
+
+可覆盖这些变量：
 
 ```bash
 make dev DEV_CONFIG_DIR=./configs DEV_TOKEN=dev DEV_ADDR=127.0.0.1:8080

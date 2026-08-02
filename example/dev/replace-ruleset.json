@@ -1,0 +1,17 @@
+{
+  "template": "template.yaml",
+  "configurations": [
+    {
+      "name": "Replace",
+      "sources": [
+        {
+          "path": "sources/replace.yaml"
+        }
+      ],
+      "includeDirect": true,
+      "enableUrlTest": false
+    }
+  ],
+  "rulesetStrategy": "replace-ruleset",
+  "cacheDurationSeconds": 0
+}

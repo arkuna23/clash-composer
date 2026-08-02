@@ -1,0 +1,14 @@
+proxies:
+  - name: Dev-URL
+    type: trojan
+    server: url.dev.example.com
+    port: 443
+    password: change-me
+    udp: true
+    sni: url.dev.example.com
+
+  - name: Dev-Duplicate
+    type: socks5
+    server: duplicate-url.dev.example.com
+    port: 1080
+    udp: true

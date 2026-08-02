@@ -28,6 +28,7 @@ coverage.*
 *.swp
 *.swo
 /merged.yaml
+/configs/
 tmp/
 temp/
 

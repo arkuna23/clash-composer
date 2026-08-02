@@ -1,0 +1,6 @@
+proxies:
+  - name: Dev-Secondary
+    type: http
+    server: secondary.dev.example.com
+    port: 8080
+    tls: false

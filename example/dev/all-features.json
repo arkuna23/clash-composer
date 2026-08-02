@@ -1,0 +1,48 @@
+{
+  "template": "template.yaml",
+  "configurations": [
+    {
+      "name": "Primary",
+      "sources": [
+        {
+          "path": "sources/path.yaml"
+        },
+        {
+          "url": "http://127.0.0.1:8091/sources/url.yaml"
+        },
+        {
+          "cmd": "cat sources/command.yaml"
+        }
+      ],
+      "includeDirect": true,
+      "includeGroups": [
+        {
+          "name": "Secondary",
+          "mode": "flatten"
+        },
+        {
+          "name": "Template-Fallback",
+          "mode": "proxy"
+        }
+      ],
+      "enableUrlTest": true
+    },
+    {
+      "name": "Secondary",
+      "sources": [
+        {
+          "path": "sources/secondary.yaml"
+        }
+      ],
+      "includeGroups": [
+        {
+          "name": "DIRECT",
+          "mode": "proxy"
+        }
+      ],
+      "enableUrlTest": false
+    }
+  ],
+  "rulesetStrategy": "url-ruleset",
+  "cacheDurationSeconds": 60
+}

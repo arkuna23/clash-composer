@@ -1,0 +1,19 @@
+proxies:
+  - name: Dev-Command
+    type: vmess
+    server: command.dev.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000003
+    alterId: 0
+    cipher: auto
+    udp: true
+    tls: true
+    servername: command.dev.example.com
+    network: ws
+    ws-opts:
+      path: /dev
+
+  - name: Dev-Duplicate
+    type: socks5
+    server: duplicate-command.dev.example.com
+    port: 1080

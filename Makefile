@@ -6,6 +6,7 @@ WEBAPP_DIR := webapp
 DEV_CONFIG_DIR ?= configs
 DEV_TOKEN ?= dev
 DEV_ADDR ?= 127.0.0.1:8080
+DEV_FIXTURE_ADDR := 127.0.0.1:8091
 
 .PHONY: build build-slim webapp go-build go-build-slim dev deploy clean distclean
 
@@ -26,11 +27,18 @@ go-build-slim: $(SOURCES) go.mod go.sum | $(BUILD_DIR)/
 	GOCACHE=$(abspath $(GOCACHE)) go build -tags noembed -o $(BINARY) .
 
 dev: go-build
-	mkdir -p $(DEV_CONFIG_DIR)
+	bash scripts/seed-dev.sh "$(DEV_CONFIG_DIR)"
 	set -e; \
 	$(BINARY) serve -config-dir $(DEV_CONFIG_DIR) -addr $(DEV_ADDR) -token $(DEV_TOKEN) & \
 	backend_pid=$$!; \
-	trap 'kill $$backend_pid 2>/dev/null || true; wait $$backend_pid 2>/dev/null || true' EXIT; \
+	GOCACHE=$(abspath $(GOCACHE)) go run ./scripts/dev-fixture.go -addr $(DEV_FIXTURE_ADDR) -dir "$(abspath $(DEV_CONFIG_DIR))" & \
+	fixture_pid=$$!; \
+	cleanup() { \
+		kill $$backend_pid $$fixture_pid 2>/dev/null || true; \
+		wait $$backend_pid 2>/dev/null || true; \
+		wait $$fixture_pid 2>/dev/null || true; \
+	}; \
+	trap cleanup EXIT; \
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
 	sleep 1; \
@@ -38,7 +46,11 @@ dev: go-build
 		wait $$backend_pid; \
 		exit 1; \
 	fi; \
-	cd $(WEBAPP_DIR) && pnpm install --frozen-lockfile && pnpm run dev
+	if ! kill -0 $$fixture_pid 2>/dev/null; then \
+		wait $$fixture_pid; \
+		exit 1; \
+	fi; \
+	cd $(WEBAPP_DIR) && pnpm install --frozen-lockfile && pnpm exec vite --host 127.0.0.1
 
 deploy:
 	./scripts/deploy.sh
